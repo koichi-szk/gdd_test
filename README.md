@@ -19,6 +19,10 @@ Collection of C-based sql functions to drive and setup information.
 This directory is dependent on original PostgreSQL source directory, at present, it is set to
 `/hdd2/koichi/postgres-folk/postgres`, which is folied repository of community postgreSQL.
 
+## Database itself
+
+Test database (`pg12_gdd_database`) is not included in GIT repo.   See `.gitignore` for details.
+
 ## Outline of Global Deadlock Detection
 
 As mentioned in most of Transaction Management textbooks, Global Deadlock is a situation where transaction

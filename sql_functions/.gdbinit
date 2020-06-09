@@ -1,0 +1,8 @@
+b gdd_test_init_test
+b gdd_test_finish_test
+b gdd_test_show_myself
+b gdd_test_show_proc
+b gdd_test_set_locktag_external_pgprocno
+b gdd_test_set_locktag_external_pgprocno
+b gdd_test_set_locktag_external_pid
+

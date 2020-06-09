@@ -54,13 +54,14 @@ static FILE		*outf = NULL;
 static PGPROC	*pgproc;
 static int64	 database_system_id;
 
-static Datum gdd_external_lock_acquire_int(PGPROC *proc);
+static Datum gdd_test_external_lock_acquire_int(char *label, PGPROC *proc);
 static Datum gdd_test_set_locktag_external_int(char *label, PGPROC *target_proc, bool increment);
 static Datum gdd_test_show_myself_int(PGPROC *proc);
 static PGPROC *find_pgproc(int pid);
 static bool register_locktag_label(char *label, LOCKTAG *locktag);
 static bool unregister_locktag_label(char *label);
 static const char *lockAcquireResultName(LockAcquireResult res);
+static const char * deadLockCheckResultName(DeadLockState res);
 static const char *lockModeName(LOCKMODE lockmode);
 static const char *waitStatusName(int status);
 static const char *waitStatusName(int status);
@@ -70,6 +71,7 @@ static bool add_locktag_dict(LOCKTAG_DICT *locktag_dict);
 static void free_locktag_dict(LOCKTAG_DICT *locktag_dict);
 static bool remove_locktag_dict(LOCKTAG_DICT *locktag_dict);
 static LOCKTAG_DICT *find_locktag_dict(char *label);
+static Datum gdd_describe_int(PGPROC *proc);
 
 /*
  * CREATE FUNCTION gdd_external_lock_test_begin(outfname text)
@@ -208,7 +210,7 @@ gdd_test_show_myself_int(PGPROC *proc)
 /*
  * CREATE FUNCTION gdd_set_locktag_external_pgprocno(label text, pgprocno int, increment bool)
  *		VOLATILE
- *		RETURNS TABLE (label text, field1 int, field2 int, field3 int, field4 int, locktype text, lockmethod int)
+ *		RETURNS TABLE (label text, field1 text, field2 text, field3 text, field4 text, locktype text, lockmethod text)
  *		LANGUAGE c
  *		AS 'gdd_test.so', 'gdd_test_set_locktag_external_pgprocno';
  * 
@@ -293,26 +295,32 @@ static Datum
 gdd_test_set_locktag_external_int(char *label, PGPROC *target_proc, bool increment)
 {
 #define CHARLEN 64
+#define NCOLNUM 7
 	LOCKTAG	 locktag;
 	/* outoput */
 	TupleDesc        tupd;
 	HeapTupleData    tupleData;
 	HeapTuple        tuple = &tupleData;
-	char             values[6][CHARLEN];
-	char            *Values[6];
+	char             values[NCOLNUM][CHARLEN];
+	char            *Values[NCOLNUM];
 	Datum            result;
 	int				 ii;
 
 
+	if (find_locktag_dict(label))
+		elog(ERROR, "Specified label '%s' has already been used.", label);
 	set_locktag_external(&locktag, target_proc, increment);
 	register_locktag_label(label, &locktag);
 
-	fprintf(outf, "%s(): : field1:%d, field2: %d, field3: %d, field4: %d, locktype: %s, lockemthod: %d\n",
+	for (ii = 0; ii < NCOLNUM; ii++)
+		Values[ii] = &values[ii][0];
+	fprintf(outf, "%s(): label:'%s', field1:%d, field2: %d, field3: %d, field4: %d, locktype: %s, lockemthod: %d.\n",
 			    "set_locktag_external",
+				label, 
 				locktag.locktag_field1, locktag.locktag_field2, locktag.locktag_field3, locktag.locktag_field4,
 				locktagTypeName(locktag.locktag_type), locktag.locktag_lockmethodid);
 	fflush(outf);
-	tupd = CreateTemplateTupleDesc(6);
+	tupd = CreateTemplateTupleDesc(7);
 	ii = 1;
 	TupleDescInitEntry(tupd, ii++, "label", TEXTOID, -1, 0);
 	TupleDescInitEntry(tupd, ii++, "field1", INT4OID, -1, 0);
@@ -322,16 +330,17 @@ gdd_test_set_locktag_external_int(char *label, PGPROC *target_proc, bool increme
 	TupleDescInitEntry(tupd, ii++, "locktype", TEXTOID, -1, 0);
 	TupleDescInitEntry(tupd, ii++, "lockmethod", INT4OID, -1, 0);
 	ii = 0;
-	strncpy(values[ii++], label, CHARLEN);
-	snprintf(values[ii++], CHARLEN, "%d", locktag.locktag_field1);
-	snprintf(values[ii++], CHARLEN, "%d", locktag.locktag_field2);
-	snprintf(values[ii++], CHARLEN, "%d", locktag.locktag_field3);
-	snprintf(values[ii++], CHARLEN, "%d", locktag.locktag_field4);
-	strncpy(values[ii++], locktagTypeName(locktag.locktag_type), CHARLEN);
-	snprintf(values[ii++], CHARLEN, "%d", locktag.locktag_lockmethodid);
+	strncpy(Values[ii++], label, CHARLEN);
+	snprintf(Values[ii++], CHARLEN, "%d", locktag.locktag_field1);
+	snprintf(Values[ii++], CHARLEN, "%d", locktag.locktag_field2);
+	snprintf(Values[ii++], CHARLEN, "%d", locktag.locktag_field3);
+	snprintf(Values[ii++], CHARLEN, "%d", locktag.locktag_field4);
+	strncpy(Values[ii++], locktagTypeName(locktag.locktag_type), CHARLEN);
+	snprintf(Values[ii++], CHARLEN, "%d", locktag.locktag_lockmethodid);
 	tuple = BuildTupleFromCStrings(TupleDescGetAttInMetadata(tupd), Values);
 	result = TupleGetDatum(TupleDescGetSlot(tupd), tuple);
 	PG_RETURN_DATUM(result);
+#undef NCOLNUM
 #undef CHARLEN
 }
 
@@ -344,14 +353,16 @@ gdd_test_set_locktag_external_int(char *label, PGPROC *target_proc, bool increme
  *		AS 'gdd_test.so', 'gdd_external_lock_acquire_myself';
  */
 
-PG_FUNCTION_INFO_V1(gdd_external_lock_acquire_myself);
+PG_FUNCTION_INFO_V1(gdd_test_external_lock_acquire_myself);
 
 Datum
-gdd_external_lock_acquire_myself(PG_FUNCTION_ARGS)
+gdd_test_external_lock_acquire_myself(PG_FUNCTION_ARGS)
 {
-	Datum result;
+	Datum 	 result;
+	char	*label;
 
-	result = gdd_external_lock_acquire_int(MyProc);
+	label = PG_GETARG_CSTRING(0);
+	result = gdd_test_external_lock_acquire_int(label, MyProc);
 	PG_RETURN_DATUM(result);
 }
 
@@ -364,61 +375,92 @@ gdd_external_lock_acquire_myself(PG_FUNCTION_ARGS)
  *
  * If pid == 0, then backed pid will be taken.
  */
-PG_FUNCTION_INFO_V1(gdd_external_lock_acquire_proc);
+PG_FUNCTION_INFO_V1(gdd_test_external_lock_acquire_pid);
 
 Datum
-gdd_external_lock_acquire_proc(PG_FUNCTION_ARGS)
+gdd_test_external_lock_acquire_pid(PG_FUNCTION_ARGS)
 {
 	Datum 	 result;
 	int	  	 pid;
+	char	*label;
 	PGPROC	*proc;
 
-	pid = PG_GETARG_INT32(0);
+	label = PG_GETARG_CSTRING(0);
+	pid = PG_GETARG_INT32(1);
 	proc = find_pgproc(pid);
 	if (proc == NULL)
 		elog(ERROR, "Could not find PGPROC entry for pid = %d.", pid);
-	result = gdd_external_lock_acquire_int(proc);
+	result = gdd_test_external_lock_acquire_int(label, proc);
+	PG_RETURN_DATUM(result);
+}
+
+
+PG_FUNCTION_INFO_V1(gdd_test_external_lock_acquire_pgprocno);
+
+Datum
+gdd_test_external_lock_acquire_pgprocno(PG_FUNCTION_ARGS)
+{
+	Datum	 result;
+	int		 pgprocno;
+	char	*label;
+	PGPROC	*proc;
+
+	label = PG_GETARG_CSTRING(0);
+	pgprocno = PG_GETARG_INT32(1);
+	if (pgprocno < 0)
+		proc = MyProc;
+	else
+		proc = &ProcGlobal->allProcs[pgprocno];
+	result = gdd_test_external_lock_acquire_int(label, proc);
 	PG_RETURN_DATUM(result);
 }
 
 static Datum
-gdd_external_lock_acquire_int(PGPROC *proc)
+gdd_test_external_lock_acquire_int(char *label, PGPROC *proc)
 {
 #define CHARLEN 32
+#define NCOLUMN 8
 	LOCKTAG				locktag;
 	LockAcquireResult	lock_result;
 	/* outoput */
 	TupleDesc        tupd;
 	HeapTupleData    tupleData;
 	HeapTuple        tuple = &tupleData;
-	char             values[7][CHARLEN];
-	char			*Values[7];
+	char             values[NCOLUMN][CHARLEN];
+	char			*Values[NCOLUMN];
 	Datum            result;
 	int				 ii;
 
-	for (ii = 0; ii < 7; ii++)
+	if (find_locktag_dict(label))
+		elog(ERROR, "Specified label '%s' has already been used.", label);
+	for (ii = 0; ii < NCOLUMN; ii++)
 		Values[ii] = &values[ii][0];
 	lock_result = ExternalLockAcquire(proc, &locktag);
-	tupd = CreateTemplateTupleDesc(7);
-	TupleDescInitEntry(tupd, 1, "result", TEXTOID, -1, 0);
-	TupleDescInitEntry(tupd, 2, "field1", INT4OID, -1, 0);
-	TupleDescInitEntry(tupd, 3, "field2", INT4OID, -1, 0);
-	TupleDescInitEntry(tupd, 4, "field3", INT4OID, -1, 0);
-	TupleDescInitEntry(tupd, 5, "field4", INT4OID, -1, 0);
-	TupleDescInitEntry(tupd, 6, "locktype", TEXTOID, -1, 0);
-	TupleDescInitEntry(tupd, 7, "lockmethod", INT4OID, -1, 0);
-	strncpy(values[0], lockAcquireResultName(lock_result), CHARLEN);
-	snprintf(values[1], CHARLEN, "%d", locktag.locktag_field1);
-	snprintf(values[2], CHARLEN, "%d", locktag.locktag_field2);
-	snprintf(values[3], CHARLEN, "%d", locktag.locktag_field3);
-	snprintf(values[4], CHARLEN, "%d", locktag.locktag_field4);
-	snprintf(values[5], CHARLEN, "%d", locktag.locktag_field4);
-	strncpy(values[6], locktagTypeName(locktag.locktag_type), CHARLEN);
-	snprintf(values[7], CHARLEN, "%d", locktag.locktag_lockmethodid);
+	register_locktag_label(label, &locktag);
+	tupd = CreateTemplateTupleDesc(NCOLUMN);
+	ii = 1;
+	TupleDescInitEntry(tupd, ii++, "label", TEXTOID, -1, 0);
+	TupleDescInitEntry(tupd, ii++, "result", TEXTOID, -1, 0);
+	TupleDescInitEntry(tupd, ii++, "field1", INT4OID, -1, 0);
+	TupleDescInitEntry(tupd, ii++, "field2", INT4OID, -1, 0);
+	TupleDescInitEntry(tupd, ii++, "field3", INT4OID, -1, 0);
+	TupleDescInitEntry(tupd, ii++, "field4", INT4OID, -1, 0);
+	TupleDescInitEntry(tupd, ii++, "locktype", TEXTOID, -1, 0);
+	TupleDescInitEntry(tupd, ii++, "lockmethd", INT4OID, -1, 0);
+	ii = 0;
+	strncpy(Values[ii++], label, CHARLEN);
+	strncpy(Values[ii++], lockAcquireResultName(lock_result), CHARLEN);
+	snprintf(Values[ii++], CHARLEN, "%d", locktag.locktag_field1);
+	snprintf(Values[ii++], CHARLEN, "%d", locktag.locktag_field2);
+	snprintf(Values[ii++], CHARLEN, "%d", locktag.locktag_field3);
+	snprintf(Values[ii++], CHARLEN, "%d", locktag.locktag_field4);
+	strncpy(Values[ii++], locktagTypeName(locktag.locktag_type), CHARLEN);
+	snprintf(Values[ii++], CHARLEN, "%d", locktag.locktag_lockmethodid);
 	tuple = BuildTupleFromCStrings(TupleDescGetAttInMetadata(tupd), Values);
 	result = TupleGetDatum(TupleDescGetSlot(tupd), tuple);
 	return(result);
 
+#undef NCOLUMN
 #undef CHARLEN
 }
 
@@ -439,9 +481,23 @@ PG_FUNCTION_INFO_V1(gdd_describe_pid);
 Datum
 gdd_describe_pid(PG_FUNCTION_ARGS)
 {
-#define CHARLEN 32
 	PGPROC	*proc;
 	int		 pid;
+	Datum	 result;
+
+	pid = PG_GETARG_INT32(0);
+	proc = find_pgproc(pid);
+	if (proc == NULL)
+		elog(ERROR, "Could not find PGPROC entry for pid = %d.", pid);
+	result = gdd_describe_int(proc);
+	PG_RETURN_DATUM(result);
+}
+
+
+static Datum
+gdd_describe_int(PGPROC *proc)
+{
+#define CHARLEN 32
 	/* outoput */
 	TupleDesc        tupd;
 	HeapTupleData    tupleData;
@@ -453,10 +509,6 @@ gdd_describe_pid(PG_FUNCTION_ARGS)
 
 	for (ii = 0; ii < 10; ii++)
 		Values[ii] = &values[ii][0];
-	pid = PG_GETARG_INT32(0);
-	proc = find_pgproc(pid);
-	if (proc == NULL)
-		elog(ERROR, "Could not find PGPROC entry for pid = %d.", pid);
 	tupd = CreateTemplateTupleDesc(10);
 	ii = 1;
 	TupleDescInitEntry(tupd, ii++, "pgprocno", INT4OID, -1, 0);
@@ -483,6 +535,17 @@ gdd_describe_pid(PG_FUNCTION_ARGS)
 	result = TupleGetDatum(TupleDescGetSlot(tupd), tuple);
 	PG_RETURN_DATUM(result);
 #undef CHARLEN
+}
+
+PG_FUNCTION_INFO_V1(gdd_describe_myself);
+
+Datum
+gdd_describe_myself(PG_FUNCTION_ARGS)
+{
+	Datum result;
+
+	result = gdd_describe_int(MyProc);
+	PG_RETURN_DATUM(result);
 }
 
 /*
@@ -560,10 +623,10 @@ gdd_if_has_external_lock(PG_FUNCTION_ARGS)
  *		AS 'gdd_test.so', 'gdd_show_external_lock';
  */
 
-PG_FUNCTION_INFO_V1(gdd_show_external_lock);
+PG_FUNCTION_INFO_V1(gdd_test_show_waiting_external_lock);
 
 Datum
-gdd_show_external_lock(PG_FUNCTION_ARGS)
+gdd_test_show_waiting_external_lock(PG_FUNCTION_ARGS)
 {
 #define CHARLEN 1024
 	int		 pid;
@@ -618,6 +681,81 @@ gdd_show_external_lock(PG_FUNCTION_ARGS)
 #undef CHARLEN
 }
 
+/*
+ * Argument: nothing
+ * RETURNS seto of TABLE
+ * 	(label text, field1 int, field2 int, field3 int, field4 int, locktype text, lockmethod int,
+ *   dns text, target_pid int, target_pgprocno int, target_lxn int);
+ */
+
+
+PG_FUNCTION_INFO_V1(gdd_test_show_registered_external_lock);
+
+Datum
+gdd_test_show_registered_external_lock(PG_FUNCTION_ARGS)
+{
+#define CHARLEN 1024
+#define NCOLUMN 11
+	FuncCallContext	*funcctx;
+	TupleDesc		 tupdesc;
+	AttInMetadata	*attinmeta;
+	HeapTupleData	 tupleData;
+	HeapTuple		 tuple = &tupleData;
+	LOCKTAG_DICT	*curr_dict;
+	char			 values[NCOLUMN][CHARLEN];
+	char			*Values[NCOLUMN];
+	int				 ii;
+
+	if (SRF_IS_FIRSTCALL())
+	{
+		MemoryContext	oldcontext;
+
+		/* Initialize itelating function */
+		funcctx = SRF_FIRSTCALL_INIT();
+		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+		if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+			ereport(ERROR,
+					  (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                       errmsg("function returning record called in context "
+							  "that cannot accept type record")));
+		attinmeta = TupleDescGetAttInMetadata(tupdesc);
+		funcctx->attinmeta = attinmeta;
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+	funcctx = SRF_PERCALL_SETUP();
+	for (ii = 0; ii < NCOLUMN; ii++)
+		Values[ii] = &values[ii][0];
+	for (curr_dict = locktag_dict_head; curr_dict; curr_dict = curr_dict->next)
+	{
+		Datum				 result;
+		ExternalLockInfo	*external_lock_info;
+
+		attinmeta = funcctx->attinmeta;
+		external_lock_info = GetExternalLockProperties(&(curr_dict->tag));
+		ii = 0;
+		strncpy(Values[ii++], curr_dict->label, CHARLEN);
+		snprintf(Values[ii++], CHARLEN, "%d", curr_dict->tag.locktag_field1);
+		snprintf(Values[ii++], CHARLEN, "%d", curr_dict->tag.locktag_field2);
+		snprintf(Values[ii++], CHARLEN, "%d", curr_dict->tag.locktag_field3);
+		snprintf(Values[ii++], CHARLEN, "%d", curr_dict->tag.locktag_field4);
+		strncpy(Values[ii++], locktagTypeName(curr_dict->tag.locktag_type), CHARLEN);
+		snprintf(Values[ii++], CHARLEN, "%d", curr_dict->tag.locktag_lockmethodid);
+		strncpy(Values[ii++], external_lock_info ? external_lock_info->dsn : "N/A", CHARLEN);
+		snprintf(Values[ii++], CHARLEN, "%d", external_lock_info ? external_lock_info->target_pid : -1);
+		snprintf(Values[ii++], CHARLEN, "%d", external_lock_info ? external_lock_info->target_pgprocno : -1);
+		snprintf(Values[ii++], CHARLEN, "%d", external_lock_info ? external_lock_info->target_txn : -1);
+
+		tuple = BuildTupleFromCStrings(attinmeta, Values);
+		result = HeapTupleGetDatum(tuple);
+		SRF_RETURN_NEXT(funcctx, result);
+	}
+	SRF_RETURN_DONE(funcctx);
+
+#undef NCOLUMN
+#undef CHARLEN
+}
+
 
 /*
  * CREATE FUNCTION gdd_show_deadlock_info()
@@ -643,14 +781,13 @@ Datum
 gdd_show_deadlock_info(PG_FUNCTION_ARGS)
 {
 #define CHARLEN 64
+#define NCOLUMN 11
 	FuncCallContext	*funcctx;
 	TupleDesc		 tupdesc;
 	AttInMetadata	*attinmeta;
 	myDeadlockInfo	*my_info;
 	HeapTupleData    tupleData;
 	HeapTuple        tuple = &tupleData;
-
-
 
 	if (SRF_IS_FIRSTCALL())
 	{
@@ -682,25 +819,25 @@ gdd_show_deadlock_info(PG_FUNCTION_ARGS)
 	{
 		Datum			 result;
 		int				 ii;
-		char			 values[11][CHARLEN];
-		char			*Values[11];
+		char			 values[NCOLUMN][CHARLEN];
+		char			*Values[NCOLUMN];
 
-		for (ii = 0; ii < 11; ii++)
+		for (ii = 0; ii < NCOLUMN; ii++)
 			Values[ii] = &values[ii][0];
 		attinmeta = funcctx->attinmeta;
 		my_info = funcctx->user_fctx;
 		ii = 0;
-		snprintf(values[ii++], CHARLEN, "%ld", funcctx->call_cntr);
-		snprintf(values[ii++], CHARLEN, "%d", my_info->deadlock_info[funcctx->call_cntr].locktag.locktag_field1);
-		snprintf(values[ii++], CHARLEN, "%d", my_info->deadlock_info[funcctx->call_cntr].locktag.locktag_field2);
-		snprintf(values[ii++], CHARLEN, "%d", my_info->deadlock_info[funcctx->call_cntr].locktag.locktag_field3);
-		snprintf(values[ii++], CHARLEN, "%d", my_info->deadlock_info[funcctx->call_cntr].locktag.locktag_field4);
-		strncpy(values[ii++], locktagTypeName(my_info->deadlock_info[funcctx->call_cntr].locktag.locktag_type), CHARLEN);
-		snprintf(values[ii++], CHARLEN, "%d", my_info->deadlock_info[funcctx->call_cntr].locktag.locktag_lockmethodid);
-		strncpy(values[ii++], lockModeName(my_info->deadlock_info[funcctx->call_cntr].lockmode), CHARLEN);
-		snprintf(values[ii++], CHARLEN, "%d", my_info->deadlock_info[funcctx->call_cntr].pid);
-		snprintf(values[ii++], CHARLEN, "%d", my_info->deadlock_info[funcctx->call_cntr].pgprocno);
-		snprintf(values[ii++], CHARLEN, "%d", my_info->deadlock_info[funcctx->call_cntr].txid);
+		snprintf(Values[ii++], CHARLEN, "%ld", funcctx->call_cntr);
+		snprintf(Values[ii++], CHARLEN, "%d", my_info->deadlock_info[funcctx->call_cntr].locktag.locktag_field1);
+		snprintf(Values[ii++], CHARLEN, "%d", my_info->deadlock_info[funcctx->call_cntr].locktag.locktag_field2);
+		snprintf(Values[ii++], CHARLEN, "%d", my_info->deadlock_info[funcctx->call_cntr].locktag.locktag_field3);
+		snprintf(Values[ii++], CHARLEN, "%d", my_info->deadlock_info[funcctx->call_cntr].locktag.locktag_field4);
+		strncpy(Values[ii++], locktagTypeName(my_info->deadlock_info[funcctx->call_cntr].locktag.locktag_type), CHARLEN);
+		snprintf(Values[ii++], CHARLEN, "%d", my_info->deadlock_info[funcctx->call_cntr].locktag.locktag_lockmethodid);
+		strncpy(Values[ii++], lockModeName(my_info->deadlock_info[funcctx->call_cntr].lockmode), CHARLEN);
+		snprintf(Values[ii++], CHARLEN, "%d", my_info->deadlock_info[funcctx->call_cntr].pid);
+		snprintf(Values[ii++], CHARLEN, "%d", my_info->deadlock_info[funcctx->call_cntr].pgprocno);
+		snprintf(Values[ii++], CHARLEN, "%d", my_info->deadlock_info[funcctx->call_cntr].txid);
 
 		tuple = BuildTupleFromCStrings(attinmeta, Values);
 
@@ -712,6 +849,7 @@ gdd_show_deadlock_info(PG_FUNCTION_ARGS)
 	{
 		SRF_RETURN_DONE(funcctx);
 	}
+#undef NCOLUMN
 #undef CHARLEN
 }
 	
@@ -767,16 +905,39 @@ release_all_lockline(void)
 static const char *
 lockAcquireResultName(LockAcquireResult res)
 {
+	switch(res)
+	{
+		case LOCKACQUIRE_NOT_AVAIL:      /* lock not available, and dontWait=true */
+			return "LOCKACQUIRE_NOT_AVAIL";
+		case LOCKACQUIRE_OK:             /* lock successfully acquired */
+			return "LOCKACQUIRE_OK";
+		case LOCKACQUIRE_ALREADY_HELD:   /* incremented count for lock already held */
+			return "LOCKACQUIRE_ALREADY_HELD";
+		case LOCKACQUIRE_ALREADY_CLEAR:  /* incremented count for lock already clear */
+			return "LOCKACQUIRE_ALREADY_CLEAR";
+	}
+	return "LOCKACQUIRE_ERROR_VALUE";
+}
+
+static const char *
+deadLockCheckResultName(DeadLockState res)
+{
 	switch (res)
 	{
-		case DS_NOT_YET_CHECKED:
+		case DS_NOT_YET_CHECKED:         /* no deadlock check has run yet */
 			return "DS_NOT_YET_CHECKED";
-		case DS_NO_DEADLOCK:
+		case DS_NO_DEADLOCK:             /* no deadlock detected */
 			return "DS_NO_DEADLOCK";
-		case DS_SOFT_DEADLOCK:
+		case DS_SOFT_DEADLOCK:           /* deadlock avoided by queue rearrangement */
 			return "DS_SOFT_DEADLOCK";
-		case DS_HARD_DEADLOCK:
+		case DS_HARD_DEADLOCK:           /* deadlock, no way out but ERROR */
 			return "DS_HARD_DEADLOCK";
+		case DS_BLOCKED_BY_AUTOVACUUM:   /* no deadlock; queue blocked by autovacuum worker */
+			return "DS_BLOCKED_BY_AUTOVACUUM";
+		case DS_EXTERNAL_LOCK:           /* waiting for remote transaction, need global deadlock detection */
+			return "DS_EXTERNAL_LOCK";
+		case DS_GLOBAL_ERROR:            /* Used only to report internal error in global deadlock detection */
+			return "DS_GLOBAL_ERROR";
 	}
 	return "DS_ERROR_VALUE";
 }
