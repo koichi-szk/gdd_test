@@ -1,6 +1,6 @@
 #!/bin/bash
 . ./conf.sh
-cd $PWD
+cd $TEST_HOME
 pgmode pg12_gdd
 pg_ctl status -D $DBDIR
 if [ $? == 0 ]; then
