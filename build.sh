@@ -42,11 +42,17 @@ gtags
 echo "htags -n -h --tabs 4" |& tee -a $LOGFILE
 htags -n -h --tabs 4
 cp -r HTML $HTAG_DIR/$TARGET_TAG
-cd $TESTSRC
 echo "--------------- Test tool build ------------------------------------------" | tee -a $LOGFILE
+echo "cd $TEST_HOME" |& tee -a $LOGFILE
+cd $TEST_HOME
+echo "cd $TESTSRC" |& tee -a $LOGFILE
+cd $TESTSRC
 if [ "$CLR_OPT" == "y" ];then
+	echo "make clean" |& tee -a $LOGFILE
 	make clean |& tee -a $LOGFILE
 fi
+echo "make" |& tee -a $LOGFILE
 make |& tee -a $LOGFILE
 echo "--------------- Test tool install ----------------------------------------" | tee -a $LOGFILE
+echo "make install" |& tee -a $LOGFILE
 make install |& tee -a $LOGFILE

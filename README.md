@@ -12,9 +12,12 @@ Copyright (c) 2020 2ndQuadrant Ltd.,
 
 ## Important directory
 
-`sql_functions`
+### `sql_functions`
 
 Collection of C-based sql functions to drive and setup information.
+
+This directory is dependent on original PostgreSQL source directory, at present, it is set to
+`/hdd2/koichi/postgres-folk/postgres`, which is folied repository of community postgreSQL.
 
 ## Outline of Global Deadlock Detection
 
