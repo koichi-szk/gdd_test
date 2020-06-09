@@ -1,2 +1,4 @@
 # テストデータベースを除外
 pg12_gdd_database
+*.o
+*.so
