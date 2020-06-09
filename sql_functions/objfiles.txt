@@ -1,0 +1,1 @@
+contrib/gdd_test/external_lock_test.o contrib/gdd_test/gdd_test_external_lock.o

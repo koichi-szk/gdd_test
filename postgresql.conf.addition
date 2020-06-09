@@ -1,0 +1,14 @@
+listen_addresses = '*'		# what IP address(es) to listen on;
+logging_collector = on		# Enable capturing of stderr and csvlog
+
+# For pglogical3 to work
+
+wal_level = logical			# minimal, replica, or logical
+#shared_preload_libraries = 'pglogical, pglogical_writer_rabbitmq'
+shared_preload_libraries = 'gdd_test.so'
+max_worker_processes = 10
+max_replication_slots = 10
+max_wal_senders = 10
+track_commit_timestamp = on
+
+# log_min_messages=DEBUG3
