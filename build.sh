@@ -16,11 +16,12 @@ cd /home/koichi/gdd_test
 mkdir -p $BUILD_LOGDIR
 LOGFILE=$(logfile_gen.sh $BUILD_LOGFILE_BODY $BUILD_LOGDIR)
 touch $LOGFILE
+export COPT='-O0 -g3'
 cd $SRCDIR
-if [ "$CLR_OPT" == "y" ]; then
-	echo "--------------- Postgres Configure ---------------------------------------" | tee -a $LOGFILE
-	echo "./configure --prefix=$TARGET --enable-debug --with-perl --with-pythonu --with-openssl" |& tee -a $LOGFILE
-	./configure --prefix=$TARGET --enable-debug --with-perl --with-pythonu --with-openssl |& tee -a $LOGFILE
+echo "--------------- Postgres Configure ---------------------------------------" | tee -a $LOGFILE
+if [ $CLR_OPT == "y" ]; then
+	echo "./configure --prefix=$TARGET --enable-debug --with-perl --with-python --with-openssl" |& tee -a $LOGFILE
+	./configure --prefix=$TARGET --enable-debug --with-perl --with-python --with-openssl |& tee -a $LOGFILE
 fi
 echo "--------------- Posatgres Build ------------------------------------------" | tee -a $LOGFILE
 if [ "$CLR_OPT" == "y" ];then

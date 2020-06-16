@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
  *
- * gdd_test_deadlock.c
+ * gdd_test_external_lock.c
  *
  *	  POSTGRES global deadlock detection test functions
  *
@@ -14,6 +14,7 @@
  *
  * IDENTIFICATION
  *	  src/backend/storage/lmgr/gdd_test_external_lock.c
+ *
  *
  *-------------------------------------------------------------------------
  */
@@ -36,10 +37,6 @@
 PG_MODULE_MAGIC;
 #endif
 
-/*
- * K.Suzuki:
- *	名前をつけて locktag をしまっておくようにする
- */
 typedef struct LOCKTAG_DICT
 {
 	struct	LOCKTAG_DICT	*next;
@@ -72,6 +69,11 @@ static void free_locktag_dict(LOCKTAG_DICT *locktag_dict);
 static bool remove_locktag_dict(LOCKTAG_DICT *locktag_dict);
 static LOCKTAG_DICT *find_locktag_dict(char *label);
 static Datum gdd_describe_int(PGPROC *proc);
+static Datum gdd_if_has_external_lock_int(PGPROC *proc);
+static PGPROC *find_pgproc_pgprocno(int pgprocno);
+static Datum gdd_test_show_waiting_external_lock_int(PGPROC *proc);
+static bool gdd_test_external_lock_set_properties_int(char *label, PGPROC *proc, char *dsn,
+										  int target_pgprocno, int target_pid, int target_xid, bool update_flag);
 
 /*
  * CREATE FUNCTION gdd_external_lock_test_begin(outfname text)
@@ -88,11 +90,11 @@ gdd_test_init_test(PG_FUNCTION_ARGS)
 	if (outf != NULL)
 	{
 		fprintf(outf, "Opened log file exists  '%s'.  Closing.\n", outfilename ? outfilename : "Unknown");
-		pfree(outfilename);
+		free(outfilename);
 		elog(LOG, "Opened log file exists.  Closing.\n");
 		fclose(outf);
 	}
-	outfilename = pstrdup(PG_GETARG_CSTRING(0));
+	outfilename = strdup(PG_GETARG_CSTRING(0));
 	outf = fopen(outfilename, "w");
 	if (outf == NULL)
 		elog(INFO, "Could not open the output file.");
@@ -249,12 +251,7 @@ gdd_test_set_locktag_external_pgprocno(PG_FUNCTION_ARGS)
 	pgprocno = PG_GETARG_INT32(1);
 	increment = PG_GETARG_BOOL(2);
 
-	if (pgprocno >= ProcGlobal->allProcCount)
-		elog(ERROR, "Given parameter value %d exceeds number of PGPROC.", pgprocno);
-	if (pgprocno < 0)
-		proc = MyProc;
-	else
-		proc = &ProcGlobal->allProcs[pgprocno];
+	proc = find_pgproc_pgprocno(pgprocno);
 	result = gdd_test_set_locktag_external_int(label, proc, increment);
 	PG_RETURN_DATUM(result);
 }
@@ -407,10 +404,7 @@ gdd_test_external_lock_acquire_pgprocno(PG_FUNCTION_ARGS)
 
 	label = PG_GETARG_CSTRING(0);
 	pgprocno = PG_GETARG_INT32(1);
-	if (pgprocno < 0)
-		proc = MyProc;
-	else
-		proc = &ProcGlobal->allProcs[pgprocno];
+	proc = find_pgproc_pgprocno(pgprocno);
 	result = gdd_test_external_lock_acquire_int(label, proc);
 	PG_RETURN_DATUM(result);
 }
@@ -493,24 +487,41 @@ gdd_describe_pid(PG_FUNCTION_ARGS)
 	PG_RETURN_DATUM(result);
 }
 
+PG_FUNCTION_INFO_V1(gdd_describe_pgprocno);
+
+Datum
+gdd_describe_pgprocno(PG_FUNCTION_ARGS)
+{
+	PGPROC *proc;
+	int		pgprocno;
+	Datum	result;
+
+	pgprocno = PG_GETARG_INT32(0);
+	proc = find_pgproc_pgprocno(pgprocno);
+	result = gdd_describe_int(proc);
+	PG_RETURN_DATUM(result);
+}
 
 static Datum
 gdd_describe_int(PGPROC *proc)
 {
 #define CHARLEN 32
+#define NCOLUMN 11
 	/* outoput */
 	TupleDesc        tupd;
 	HeapTupleData    tupleData;
 	HeapTuple        tuple = &tupleData;
-	char             values[10][CHARLEN];
-	char			*Values[10];
+	char             values[NCOLUMN][CHARLEN];
+	char			*Values[NCOLUMN];
 	Datum            result;
 	int				 ii;
 
-	for (ii = 0; ii < 10; ii++)
+	for (ii = 0; ii < NCOLUMN; ii++)
 		Values[ii] = &values[ii][0];
 	tupd = CreateTemplateTupleDesc(10);
 	ii = 1;
+
+	TupleDescInitEntry(tupd, ii++, "pid", INT4OID, -1, 0);
 	TupleDescInitEntry(tupd, ii++, "pgprocno", INT4OID, -1, 0);
 	TupleDescInitEntry(tupd, ii++, "waitstatus", TEXTOID, -1, 0);
 	TupleDescInitEntry(tupd, ii++, "wlocktag1", INT4OID, -1, 0);
@@ -521,6 +532,7 @@ gdd_describe_int(PGPROC *proc)
 	TupleDescInitEntry(tupd, ii++, "wlockmethod", INT4OID, -1, 0);
 	TupleDescInitEntry(tupd, ii++, "lockleaderpid", INT4OID, -1, 0);
 	ii = 0;
+	snprintf(values[ii++], CHARLEN, "%d", proc->pid);
 	snprintf(values[ii++], CHARLEN, "%d", proc->pgprocno);
 	strncpy(values[ii++], waitStatusName(proc->waitStatus), CHARLEN);
 	snprintf(values[ii++], CHARLEN, "%d", proc->pgprocno);
@@ -534,8 +546,45 @@ gdd_describe_int(PGPROC *proc)
 	tuple = BuildTupleFromCStrings(TupleDescGetAttInMetadata(tupd), Values);
 	result = TupleGetDatum(TupleDescGetSlot(tupd), tuple);
 	PG_RETURN_DATUM(result);
+#undef NCOLUMN
 #undef CHARLEN
 }
+
+/*
+ * Display PGPROC wait status
+ */
+/*
+DROP FUNCTION IF EXISTS gdd_describe_pid(int);
+CREATE OR REPLACE FUNCTION
+    gdd_describe_pid(int)
+    RETURNS TABLE
+    (pid int, pgprocno int, waitstatus text, wlocktag1 int, wlocktag2 int, wlocktag3 int, wlocktag4 int,
+     wlocktype text, wlockmethod int, lockleaderpid int)
+    LANGUAGE c VOLATILE
+    AS 'gdd_test.so', 'gdd_describe_pid';
+
+DROP FUNCTION IF EXISTS gdd_describe_pgprocno(int);
+CREATE OR REPLACE FUNCTION
+    gdd_describe_pgprocno(int)
+    RETURNS TABLE
+    (pid int, pgprocno int, waitstatus text, wlocktag1 int, wlocktag2 int, wlocktag3 int, wlocktag4 int,
+     wlocktype text, wlockmethod int, lockleaderpid int)
+    LANGUAGE c VOLATILE
+    AS 'gdd_test.so', 'gdd_describe_pgprocno';
+
+DROP FUNCTION IF EXISTS gdd_describe_myself();
+CREATE OR REPLACE FUNCTION
+    gdd_describe_myself()
+    RETURNS TABLE
+    (pid int, pgprocno int, waitstatus text, wlocktag1 int, wlocktag2 int, wlocktag3 int, wlocktag4 int,
+     wlocktype text, wlockmethod int, lockleaderpid int)
+    LANGUAGE c VOLATILE
+    AS 'gdd_test.so', 'gdd_describe_myself';
+
+K.Suzuki
+ 上記の関数を以下できちんと実装すること Jul. 16, 2020
+*/
+
 
 PG_FUNCTION_INFO_V1(gdd_describe_myself);
 
@@ -545,7 +594,10 @@ gdd_describe_myself(PG_FUNCTION_ARGS)
 	Datum result;
 
 	result = gdd_describe_int(MyProc);
-	PG_RETURN_DATUM(result);
+	if (result)
+		PG_RETURN_DATUM(result);
+	else
+		PG_RETURN_NULL(result);
 }
 
 /*
@@ -559,28 +611,15 @@ gdd_describe_myself(PG_FUNCTION_ARGS)
  *		LANGUAGE c
  *		AS 'gdd_test.so', 'gdd_if_has_external_lock';
  */
-PG_FUNCTION_INFO_V1(gdd_if_has_external_lock);
+PG_FUNCTION_INFO_V1(gdd_if_has_external_lock_pid);
 
 Datum
-gdd_if_has_external_lock(PG_FUNCTION_ARGS)
+gdd_if_has_external_lock_pid(PG_FUNCTION_ARGS)
 {
-#define CHARLEN 32
 	int		 pid;
 	PGPROC	*proc;
-	bool	 has_external_lock;
-	bool	 has_external_proc;
-	ExternalLockInfo	*external_lock_info;
-	/* outoput */
-	TupleDesc        tupd;
-	HeapTupleData    tupleData;
-	HeapTuple        tuple = &tupleData;
-	char             values[2][CHARLEN];
-	char			*Values[2];
-	Datum            result;
-	int				 ii;
+	Datum	 result;
 
-	for (ii = 0; ii < 2; ii++)
-		Values[ii] = &values[ii][0];
 	pid = PG_GETARG_INT32(0);
 	proc = find_pgproc(pid);
 	if (proc == NULL)
@@ -588,25 +627,75 @@ gdd_if_has_external_lock(PG_FUNCTION_ARGS)
 		elog(WARNING, "Could not find PGPROC entry for pid = %d.", pid);
 		PG_RETURN_NULL();
 	}
+	result = gdd_if_has_external_lock_int(proc);
+	PG_RETURN_DATUM(result);
+}
+
+PG_FUNCTION_INFO_V1(gdd_if_has_external_lock_pgprocno);
+
+Datum
+gdd_if_has_external_lock_pgprocno(PG_FUNCTION_ARGS)
+{
+	int		 pgprocno;
+	PGPROC	*proc;
+	Datum	 result;
+
+	pgprocno = PG_GETARG_INT32(0);
+	proc = find_pgproc_pgprocno(pgprocno);
+	result = gdd_if_has_external_lock_int(proc);
+	PG_RETURN_DATUM(result);
+}
+
+PG_FUNCTION_INFO_V1(gdd_if_has_external_lock_myself);
+
+Datum
+gdd_if_has_external_lock_myself(PG_FUNCTION_ARGS)
+{
+	Datum	result;
+
+	result = gdd_if_has_external_lock_int(MyProc);
+	PG_RETURN_DATUM(result);
+}
+
+static Datum
+gdd_if_has_external_lock_int(PGPROC *proc)
+{
+#define CHARLEN 32
+#define NCOLUMN 2
+	bool	 has_external_lock;
+	bool	 has_external_lock_property;
+	ExternalLockInfo	*external_lock_info;
+	/* outoput */
+	TupleDesc        tupd;
+	HeapTupleData    tupleData;
+	HeapTuple        tuple = &tupleData;
+	char             values[NCOLUMN][CHARLEN];
+	char			*Values[NCOLUMN];
+	Datum            result;
+	int				 ii;
+
+	for (ii = 0; ii < NCOLUMN; ii++)
+		Values[ii] = &values[ii][0];
 	has_external_lock
 		= (proc->waitLock && proc->waitLock->tag.locktag_type == LOCKTAG_EXTERNAL) ? true : false;
 	if (has_external_lock)
 	{
 		external_lock_info = GetExternalLockProperties(&(proc->waitLock->tag));
-		has_external_proc = external_lock_info ? true : false;
+		has_external_lock_property = external_lock_info ? true : false;
 	}
 	else
-		has_external_proc = false;
+		has_external_lock_property = false;
 	tupd = CreateTemplateTupleDesc(2);
 	ii = 1;
 	TupleDescInitEntry(tupd, ii++, "has_external_lock", BOOLOID, -1, 0);
-	TupleDescInitEntry(tupd, ii++, "has_external_proc", BOOLOID, -1, 0);
+	TupleDescInitEntry(tupd, ii++, "has_external_lock_property", BOOLOID, -1, 0);
 	ii = 0;
 	strncpy(values[ii++], has_external_lock ? "true" : "false", CHARLEN);
-	strncpy(values[ii++], has_external_proc ? "true" : "false", CHARLEN);
+	strncpy(values[ii++], has_external_lock_property ? "true" : "false", CHARLEN);
 	tuple = BuildTupleFromCStrings(TupleDescGetAttInMetadata(tupd), Values);
 	result = TupleGetDatum(TupleDescGetSlot(tupd), tuple);
 	PG_RETURN_DATUM(result);
+#undef NCOLUMN
 #undef CHARLEN
 }
 
@@ -623,37 +712,81 @@ gdd_if_has_external_lock(PG_FUNCTION_ARGS)
  *		AS 'gdd_test.so', 'gdd_show_external_lock';
  */
 
-PG_FUNCTION_INFO_V1(gdd_test_show_waiting_external_lock);
+PG_FUNCTION_INFO_V1(gdd_test_show_waiting_external_lock_pid);
 
 Datum
-gdd_test_show_waiting_external_lock(PG_FUNCTION_ARGS)
+gdd_test_show_waiting_external_lock_pid(PG_FUNCTION_ARGS)
 {
-#define CHARLEN 1024
 	int		 pid;
 	PGPROC	*proc;
+	Datum	 result;
+
+	pid = PG_GETARG_INT32(0);
+	proc = find_pgproc(pid);
+	if (proc == NULL)
+		elog(ERROR, "Could not find PGPROC entry for pid = %d.", pid);
+	result = gdd_test_show_waiting_external_lock_int(proc);
+	PG_RETURN_DATUM(result);
+}
+
+PG_FUNCTION_INFO_V1(gdd_test_show_waiting_external_lock_pgprocno);
+
+Datum
+gdd_test_show_waiting_external_lock_pgprocno(PG_FUNCTION_ARGS)
+{
+	int		 pgprocno;
+	PGPROC	*proc;
+	Datum	 result;
+
+	pgprocno = PG_GETARG_INT32(0);
+	proc = find_pgproc_pgprocno(pgprocno);
+	result = gdd_test_show_waiting_external_lock_int(proc);
+	PG_RETURN_DATUM(result);
+}
+
+PG_FUNCTION_INFO_V1(gdd_test_show_waiting_external_lock_myself);
+
+Datum
+gdd_test_show_waiting_external_lock_myself(PG_FUNCTION_ARGS)
+{
+	Datum	 result;
+
+	result = gdd_test_show_waiting_external_lock_int(MyProc);
+	PG_RETURN_DATUM(result);
+}
+
+static Datum
+gdd_test_show_waiting_external_lock_int(PGPROC *proc)
+{
+#define CHARLEN 1024
+#define	NCOLUMN	11
 	LOCK	*waitLock;
 	ExternalLockInfo	*external_lock_info;
 	/* outoput */
 	TupleDesc        tupd;
 	HeapTupleData    tupleData;
 	HeapTuple        tuple = &tupleData;
-	char             values[10][CHARLEN];
-	char			*Values[10];
+	char             values[NCOLUMN][CHARLEN];
+	char			*Values[NCOLUMN];
 	Datum            result;
 	int				 ii;
+	bool			 has_waitlock;
 
-	for (ii = 0; ii < 10; ii++)
+	for (ii = 0; ii < NCOLUMN; ii++)
 		Values[ii] = &values[ii][0];
-	pid = PG_GETARG_INT32(0);
-	proc = find_pgproc(pid);
-	if (proc == NULL)
-		elog(ERROR, "Could not find PGPROC entry for pid = %d.", pid);
 	waitLock = proc->waitLock;
 	if (!waitLock || waitLock->tag.locktag_type != LOCKTAG_EXTERNAL)
-		elog(ERROR, "Pid %d does not waiting for external lock.", pid);
-	external_lock_info = GetExternalLockProperties(&(waitLock->tag));
+		has_waitlock = false;
+	else
+		has_waitlock = true;
+	if (has_waitlock)
+		external_lock_info = GetExternalLockProperties(&(waitLock->tag));
+	else
+		external_lock_info = NULL;
+
 	tupd = CreateTemplateTupleDesc(9);
 	ii = 1;
+	TupleDescInitEntry(tupd, ii++, "pid", INT4OID, -1, 0);
 	TupleDescInitEntry(tupd, ii++, "wlocktag1", INT4OID, -1, 0);
 	TupleDescInitEntry(tupd, ii++, "wlocktag2", INT4OID, -1, 0);
 	TupleDescInitEntry(tupd, ii++, "wlocktag3", INT4OID, -1, 0);
@@ -665,19 +798,21 @@ gdd_test_show_waiting_external_lock(PG_FUNCTION_ARGS)
 	TupleDescInitEntry(tupd, ii++, "target_pgprocno", INT4OID, -1, 0);
 	TupleDescInitEntry(tupd, ii++, "target_txn", INT4OID, -1, 0);
 	ii = 0;
-	snprintf(values[ii++], CHARLEN, "%d", waitLock->tag.locktag_field1);
-	snprintf(values[ii++], CHARLEN, "%d", waitLock->tag.locktag_field2);
-	snprintf(values[ii++], CHARLEN, "%d", waitLock->tag.locktag_field3);
-	snprintf(values[ii++], CHARLEN, "%d", waitLock->tag.locktag_field4);
-	strncpy(values[ii++], locktagTypeName(waitLock->tag.locktag_type), CHARLEN);
-	snprintf(values[ii++], CHARLEN, "%d", waitLock->tag.locktag_lockmethodid);
-	strncpy(values[ii++], external_lock_info ? external_lock_info->dsn : "", CHARLEN);
+	snprintf(values[ii++], CHARLEN, "%d", proc->pid);
+	snprintf(values[ii++], CHARLEN, "%d", has_waitlock ? waitLock->tag.locktag_field1 : -1);
+	snprintf(values[ii++], CHARLEN, "%d", has_waitlock ? waitLock->tag.locktag_field2 : -1);
+	snprintf(values[ii++], CHARLEN, "%d", has_waitlock ? waitLock->tag.locktag_field3 : -1);
+	snprintf(values[ii++], CHARLEN, "%d", has_waitlock ? waitLock->tag.locktag_field4 : -1);
+	strncpy(values[ii++], has_waitlock ? locktagTypeName(waitLock->tag.locktag_type) : "NO_LOCK_FOUND", CHARLEN);
+	snprintf(values[ii++], CHARLEN, "%d", has_waitlock ? waitLock->tag.locktag_lockmethodid : -1);
+	strncpy(values[ii++], external_lock_info ? external_lock_info->dsn : "N/A", CHARLEN);
 	snprintf(values[ii++], CHARLEN, "%d", external_lock_info ? external_lock_info->target_pid : -1);
 	snprintf(values[ii++], CHARLEN, "%d", external_lock_info ? external_lock_info->target_pgprocno : -1);
 	snprintf(values[ii++], CHARLEN, "%d", external_lock_info ? external_lock_info->target_txn : -1);
 	tuple = BuildTupleFromCStrings(TupleDescGetAttInMetadata(tupd), Values);
 	result = TupleGetDatum(TupleDescGetSlot(tupd), tuple);
-	PG_RETURN_DATUM(result);
+	return result;
+#undef NCOLUMN
 #undef CHARLEN
 }
 
@@ -685,7 +820,7 @@ gdd_test_show_waiting_external_lock(PG_FUNCTION_ARGS)
  * Argument: nothing
  * RETURNS seto of TABLE
  * 	(label text, field1 int, field2 int, field3 int, field4 int, locktype text, lockmethod int,
- *   dns text, target_pid int, target_pgprocno int, target_lxn int);
+ *   dsn text, target_pid int, target_pgprocno int, target_lxn int);
  */
 
 
@@ -720,13 +855,15 @@ gdd_test_show_registered_external_lock(PG_FUNCTION_ARGS)
 							  "that cannot accept type record")));
 		attinmeta = TupleDescGetAttInMetadata(tupdesc);
 		funcctx->attinmeta = attinmeta;
+		funcctx->user_fctx = locktag_dict_head;
 
 		MemoryContextSwitchTo(oldcontext);
 	}
 	funcctx = SRF_PERCALL_SETUP();
 	for (ii = 0; ii < NCOLUMN; ii++)
 		Values[ii] = &values[ii][0];
-	for (curr_dict = locktag_dict_head; curr_dict; curr_dict = curr_dict->next)
+	curr_dict = (LOCKTAG_DICT *)funcctx->user_fctx;
+	if (curr_dict)
 	{
 		Datum				 result;
 		ExternalLockInfo	*external_lock_info;
@@ -748,6 +885,7 @@ gdd_test_show_registered_external_lock(PG_FUNCTION_ARGS)
 
 		tuple = BuildTupleFromCStrings(attinmeta, Values);
 		result = HeapTupleGetDatum(tuple);
+		funcctx->user_fctx = curr_dict->next;
 		SRF_RETURN_NEXT(funcctx, result);
 	}
 	SRF_RETURN_DONE(funcctx);
@@ -796,7 +934,7 @@ gdd_show_deadlock_info(PG_FUNCTION_ARGS)
 		/* Initialize itelating function */
 		funcctx = SRF_FIRSTCALL_INIT();
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
-		my_info = palloc(sizeof(myDeadlockInfo));
+		my_info = malloc(sizeof(myDeadlockInfo));
 		my_info->deadlock_info = GetDeadLockInfo(&my_info->nDeadlockInfo);
 		if (my_info->deadlock_info == NULL)
 			elog(ERROR, "No deadlock infor found in this proc.");
@@ -852,7 +990,322 @@ gdd_show_deadlock_info(PG_FUNCTION_ARGS)
 #undef NCOLUMN
 #undef CHARLEN
 }
+
+
+PG_FUNCTION_INFO_V1(gdd_test_external_lock_set_properties_pid);
+
+Datum
+gdd_test_external_lock_set_properties_pid(PG_FUNCTION_ARGS)
+{
+	char	*label;
+	int		 pid;
+	char	*dsn;
+	int		 target_pgprocno;
+	int		 target_pid;
+	int		 target_xid;
+	bool	 update_flag;
+	PGPROC	*proc;
+	bool	 result;
+
+
+	label = PG_GETARG_CSTRING(0);
+	pid = PG_GETARG_INT32(1);
+	dsn = PG_GETARG_CSTRING(2);
+	target_pgprocno = PG_GETARG_INT32(3);
+	target_pid = PG_GETARG_INT32(4);
+	target_xid = PG_GETARG_INT32(5);
+	update_flag = PG_GETARG_BOOL(6);
+
+	proc = find_pgproc(pid);
+	if (proc == NULL)
+		elog(ERROR, "PGPROC not found for pid: %d.", pid);
+	result = gdd_test_external_lock_set_properties_int(label, proc,
+				dsn, target_pgprocno, target_pid, target_xid, update_flag);
+	PG_RETURN_BOOL(result);
+}
+
+PG_FUNCTION_INFO_V1(gdd_test_external_lock_set_properties_pgprocno);
+
+Datum
+gdd_test_external_lock_set_properties_pgprocno(PG_FUNCTION_ARGS)
+{
+	char	*label;
+	int		 pgprocno;
+	char	*dsn;
+	int		 target_pgprocno;
+	int		 target_pid;
+	int		 target_xid;
+	bool	 update_flag;
+	PGPROC	*proc;
+	bool	 result;
+
+
+	label = PG_GETARG_CSTRING(0);
+	pgprocno = PG_GETARG_INT32(1);
+	dsn = PG_GETARG_CSTRING(2);
+	target_pgprocno = PG_GETARG_INT32(3);
+	target_pid = PG_GETARG_INT32(4);
+	target_xid = PG_GETARG_INT32(5);
+	update_flag = PG_GETARG_BOOL(6);
+
+	proc = find_pgproc_pgprocno(pgprocno);
+	if (proc == NULL)
+		elog(ERROR, "PGPROC not found for pgprocno: %d.", pgprocno);
+	result = gdd_test_external_lock_set_properties_int(label, proc,
+				dsn, target_pgprocno, target_pid, target_xid, update_flag);
+	PG_RETURN_BOOL(result);
+}
+
+PG_FUNCTION_INFO_V1(gdd_test_external_lock_set_properties_myself);
+
+Datum
+gdd_test_external_lock_set_properties_myself(PG_FUNCTION_ARGS)
+{
+	char	*label;
+	char	*dsn;
+	int		 target_pgprocno;
+	int		 target_pid;
+	int		 target_xid;
+	bool	 update_flag;
+	bool	 result;
+
+
+	label = PG_GETARG_CSTRING(0);
+	dsn = PG_GETARG_CSTRING(1);
+	target_pgprocno = PG_GETARG_INT32(2);
+	target_pid = PG_GETARG_INT32(3);
+	target_xid = PG_GETARG_INT32(4);
+	update_flag = PG_GETARG_BOOL(5);
+
+	result = gdd_test_external_lock_set_properties_int(label, MyProc,
+				dsn, target_pgprocno, target_pid, target_xid, update_flag);
+	PG_RETURN_BOOL(result);
+}
+
+static bool
+gdd_test_external_lock_set_properties_int(char		*label,
+										  PGPROC	*proc,
+										  char		*dsn,
+										  int		 target_pgprocno,
+										  int		 target_pid,
+										  int		 target_xid,
+										  bool		 update_flag)
+{
+	LOCKTAG_DICT	*locktag_dict;
+	bool			 result;
+
+	locktag_dict = find_locktag_dict(label);
+	if (locktag_dict == NULL)
+		elog(ERROR, "Locktag not found with label '%s'.", label);
+	result = ExternalLockSetProperties(&locktag_dict->tag, proc, dsn, target_pgprocno, target_pid, target_xid, update_flag);
+	return(result);
+}
+
+PG_FUNCTION_INFO_V1(gdd_test_external_lock_wait_myself);
+
+Datum
+gdd_test_external_lock_wait_myself(PG_FUNCTION_ARGS)
+{
+	char	*label;
+	bool	 result;
+	LOCKTAG_DICT	*locktag_dict;
+
+
+	label = PG_GETARG_CSTRING(0);
+	locktag_dict = find_locktag_dict(label);
+	if (locktag_dict == NULL)
+		elog(ERROR, "Locktag for label '%s' not found.", label);
+
+	result = ExternalLockWaitProc(&locktag_dict->tag, MyProc);
+	PG_RETURN_BOOL(result);
+}
+
+PG_FUNCTION_INFO_V1(gdd_test_external_lock_wait_pid);
+
+Datum
+gdd_test_external_lock_wait_pid(PG_FUNCTION_ARGS)
+{
+	char	*label;
+	int		 pid;
+	PGPROC	*proc;
+	bool	 result;
+	LOCKTAG_DICT	*locktag_dict;
+
+
+	label = PG_GETARG_CSTRING(0);
+	pid = PG_GETARG_INT32(1);
+
+	locktag_dict = find_locktag_dict(label);
+	if (locktag_dict == NULL)
+		elog(ERROR, "Locktag for label '%s' not found.", label);
+	proc = find_pgproc(pid);
+	if (proc == NULL)
+		elog(ERROR, "PGPROC does not exist for process: %d.", pid);
+
+	result = ExternalLockWaitProc(&locktag_dict->tag, proc);
+	PG_RETURN_BOOL(result);
+}
+
+PG_FUNCTION_INFO_V1(gdd_test_external_lock_wait_pgprocno);
+
+Datum
+gdd_test_external_lock_wait_pgprocno(PG_FUNCTION_ARGS)
+{
+	char	*label;
+	int		 pgprocno;
+	PGPROC	*proc;
+	bool	 result;
+	LOCKTAG_DICT	*locktag_dict;
+
+
+	label = PG_GETARG_CSTRING(0);
+	pgprocno = PG_GETARG_INT32(1);
+
+	locktag_dict = find_locktag_dict(label);
+	if (locktag_dict == NULL)
+		elog(ERROR, "Locktag for label '%s' not found.", label);
+	proc = find_pgproc_pgprocno(pgprocno);
+	if (proc == NULL)
+		elog(ERROR, "PGPROC does not exist for pgprocno: %d.", pgprocno);
+
+	result = ExternalLockWaitProc(&locktag_dict->tag, proc);
+	PG_RETURN_BOOL(result);
+}
+
+PG_FUNCTION_INFO_V1(gdd_test_external_lock_unwait_pid);
+
+Datum
+gdd_test_external_lock_unwait_pid(PG_FUNCTION_ARGS)
+{
+	char	*label;
+	int		 pid;
+	PGPROC	*proc;
+	bool	 result;
+	LOCKTAG_DICT	*locktag_dict;
+
+
+	label = PG_GETARG_CSTRING(0);
+	pid = PG_GETARG_INT32(1);
+
+	locktag_dict = find_locktag_dict(label);
+	if (locktag_dict == NULL)
+		elog(ERROR, "Locktag for label '%s' not found.", label);
+	proc = find_pgproc(pid);
+	if (proc == NULL)
+		elog(ERROR, "PGPROC does not exist for process: %d.", pid);
+
+	result = ExternalLockUnWaitProc(&locktag_dict->tag, proc);
+	PG_RETURN_BOOL(result);
+}
+
+PG_FUNCTION_INFO_V1(gdd_test_external_lock_unwait_pgprocno);
+
+Datum
+gdd_test_external_lock_unwait_pgprocno(PG_FUNCTION_ARGS)
+{
+	char	*label;
+	int		 pgprocno;
+	PGPROC	*proc;
+	bool	 result;
+	LOCKTAG_DICT	*locktag_dict;
+
+
+	label = PG_GETARG_CSTRING(0);
+	pgprocno = PG_GETARG_INT32(1);
+
+	locktag_dict = find_locktag_dict(label);
+	if (locktag_dict == NULL)
+		elog(ERROR, "Locktag for label '%s' not found.", label);
+	proc = find_pgproc_pgprocno(pgprocno);
+	if (proc == NULL)
+		elog(ERROR, "PGPROC does not exist for pgprocno: %d.", pgprocno);
+
+	result = ExternalLockUnWaitProc(&locktag_dict->tag, proc);
+	PG_RETURN_BOOL(result);
+}
+
+PG_FUNCTION_INFO_V1(gdd_test_external_lock_unwait_myself);
+
+Datum
+gdd_test_external_lock_unwait_myself(PG_FUNCTION_ARGS)
+{
+	char			*label;
+	bool			 result;
+	LOCKTAG_DICT	*locktag_dict;
+
+
+	label = PG_GETARG_CSTRING(0);
+
+	locktag_dict = find_locktag_dict(label);
+	if (locktag_dict == NULL)
+		elog(ERROR, "Locktag for label '%s' not found.", label);
+
+	result = ExternalLockUnWaitProc(&locktag_dict->tag, MyProc);
+	PG_RETURN_BOOL(result);
+}
+
+
+PG_FUNCTION_INFO_V1(gdd_test_external_lock_release);
+
+Datum
+gdd_test_external_lock_release(PG_FUNCTION_ARGS)
+{
+	char			*label;
+	bool	 		 result;
+	LOCKTAG_DICT	*locktag_dict;
+
+
+	label = PG_GETARG_CSTRING(0);
+
+	locktag_dict = find_locktag_dict(label);
+	if (locktag_dict == NULL)
+		elog(ERROR, "Locktag for label '%s' not found.", label);
+
+	result = ExternalLockRelease(&locktag_dict->tag);
+	unregister_locktag_label(label);
+	PG_RETURN_BOOL(result);
+}
+
+PG_FUNCTION_INFO_V1(gdd_test_deadlock_check_pid);
+
+Datum
+gdd_test_deadlock_check_pid(PG_FUNCTION_ARGS)
+{
+	int				 pid;
+	PGPROC			*proc;
+	DeadLockState	 state;
+
+
+	pid = PG_GETARG_INT32(0);
+	proc = find_pgproc(pid);
+	if (proc == NULL)
+		elog(ERROR, "PGPROC not found for pid = %d.", pid);
 	
+	hold_all_lockline();
+	state = DeadLockCheck(proc);
+	release_all_lockline();
+
+	PG_RETURN_CSTRING(deadLockCheckResultName(state));
+}
+
+PG_FUNCTION_INFO_V1(gdd_test_deadlock_check_myself);
+
+Datum
+gdd_test_deadlock_check_myself(PG_FUNCTION_ARGS)
+{
+	DeadLockState	 state;
+
+	hold_all_lockline();
+	state = DeadLockCheck(MyProc);
+	release_all_lockline();
+
+	PG_RETURN_CSTRING(deadLockCheckResultName(state));
+}
+
+
+
+
+/*****************************************************************************************************************/
 
 static PGPROC *
 find_pgproc(int pid)
@@ -860,7 +1313,7 @@ find_pgproc(int pid)
 	int	ii;
 	PGPROC *proc = NULL;
 
-	hold_all_lockline();
+	LWLockAcquire(ProcArrayLock, LW_SHARED);
 	for (ii = 0; ii < ProcGlobal->allProcCount; ii++)
 	{
 		if (ProcGlobal->allProcs[ii].pid == pid)
@@ -878,7 +1331,7 @@ find_pgproc(int pid)
 			break;
 		}
 	}
-	release_all_lockline();
+	LWLockRelease(ProcArrayLock);
 	if (pgproc == NULL)
 		fprintf(outf, "%s(): failed to find PGPROC, pid=%d.\n", __func__, pid);
 	return proc;
@@ -989,8 +1442,8 @@ register_locktag_label(char *label, LOCKTAG *locktag)
 {
 	LOCKTAG_DICT	*locktag_dict;
 
-	locktag_dict = (LOCKTAG_DICT *)palloc(sizeof(LOCKTAG_DICT));
-	locktag_dict->label = pstrdup(label);
+	locktag_dict = (LOCKTAG_DICT *)malloc(sizeof(LOCKTAG_DICT));
+	locktag_dict->label = strdup(label);
 	memcpy(&locktag_dict->tag, locktag, sizeof(LOCKTAG));
 	return(add_locktag_dict(locktag_dict));
 };
@@ -1037,14 +1490,16 @@ add_locktag_dict(LOCKTAG_DICT *locktag_dict)
 static void
 free_locktag_dict(LOCKTAG_DICT *locktag_dict)
 {
-	pfree(locktag_dict->label);
-	pfree(locktag_dict);
+	free(locktag_dict->label);
+	free(locktag_dict);
 }
 
 static bool
 remove_locktag_dict(LOCKTAG_DICT *locktag_dict)
 {
 	LOCKTAG_DICT *curr;
+
+	curr = locktag_dict_head;
 
 	if (locktag_dict_head == locktag_dict)
 	{
@@ -1076,4 +1531,14 @@ remove_locktag_dict(LOCKTAG_DICT *locktag_dict)
 		}
 	}
 	return false;
+}
+
+static PGPROC *
+find_pgproc_pgprocno(int pgprocno)
+{
+	if (pgprocno < 0)
+		return MyProc;
+	if (pgprocno >= ProcGlobal->allProcCount) 
+		elog(ERROR, "Pgprocno is out of bounds. Max should be %d.", ProcGlobal->allProcCount);
+	return &ProcGlobal->allProcs[pgprocno];
 }
