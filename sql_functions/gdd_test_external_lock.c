@@ -61,7 +61,6 @@ static const char *lockAcquireResultName(LockAcquireResult res);
 static const char * deadLockCheckResultName(DeadLockState res);
 static const char *lockModeName(LOCKMODE lockmode);
 static const char *waitStatusName(int status);
-static const char *waitStatusName(int status);
 static void hold_all_lockline(void);
 static void release_all_lockline(void);
 static bool add_locktag_dict(LOCKTAG_DICT *locktag_dict);
@@ -74,6 +73,7 @@ static PGPROC *find_pgproc_pgprocno(int pgprocno);
 static Datum gdd_test_show_waiting_external_lock_int(PGPROC *proc);
 static bool gdd_test_external_lock_set_properties_int(char *label, PGPROC *proc, char *dsn,
 										  int target_pgprocno, int target_pid, int target_xid, bool update_flag);
+static Datum gdd_describe_int(PGPROC *proc);
 
 /*
  * CREATE FUNCTION gdd_external_lock_test_begin(outfname text)
@@ -498,10 +498,22 @@ gdd_describe_pgprocno(PG_FUNCTION_ARGS)
 
 	pgprocno = PG_GETARG_INT32(0);
 	proc = find_pgproc_pgprocno(pgprocno);
+	if (proc == NULL)
+		elog(ERROR, "Could not find PGPROC entry for pgprocno = %d.", pgprocno);
 	result = gdd_describe_int(proc);
 	PG_RETURN_DATUM(result);
 }
 
+PG_FUNCTION_INFO_V1(gdd_describe_myself);
+
+Datum
+gdd_describe_myself(PG_FUNCTION_ARGS)
+{
+	Datum	 result;
+
+	result = gdd_describe_int(MyProc);
+	PG_RETURN_DATUM(result);
+}
 static Datum
 gdd_describe_int(PGPROC *proc)
 {
@@ -548,56 +560,6 @@ gdd_describe_int(PGPROC *proc)
 	PG_RETURN_DATUM(result);
 #undef NCOLUMN
 #undef CHARLEN
-}
-
-/*
- * Display PGPROC wait status
- */
-/*
-DROP FUNCTION IF EXISTS gdd_describe_pid(int);
-CREATE OR REPLACE FUNCTION
-    gdd_describe_pid(int)
-    RETURNS TABLE
-    (pid int, pgprocno int, waitstatus text, wlocktag1 int, wlocktag2 int, wlocktag3 int, wlocktag4 int,
-     wlocktype text, wlockmethod int, lockleaderpid int)
-    LANGUAGE c VOLATILE
-    AS 'gdd_test.so', 'gdd_describe_pid';
-
-DROP FUNCTION IF EXISTS gdd_describe_pgprocno(int);
-CREATE OR REPLACE FUNCTION
-    gdd_describe_pgprocno(int)
-    RETURNS TABLE
-    (pid int, pgprocno int, waitstatus text, wlocktag1 int, wlocktag2 int, wlocktag3 int, wlocktag4 int,
-     wlocktype text, wlockmethod int, lockleaderpid int)
-    LANGUAGE c VOLATILE
-    AS 'gdd_test.so', 'gdd_describe_pgprocno';
-
-DROP FUNCTION IF EXISTS gdd_describe_myself();
-CREATE OR REPLACE FUNCTION
-    gdd_describe_myself()
-    RETURNS TABLE
-    (pid int, pgprocno int, waitstatus text, wlocktag1 int, wlocktag2 int, wlocktag3 int, wlocktag4 int,
-     wlocktype text, wlockmethod int, lockleaderpid int)
-    LANGUAGE c VOLATILE
-    AS 'gdd_test.so', 'gdd_describe_myself';
-
-K.Suzuki
- 上記の関数を以下できちんと実装すること Jul. 16, 2020
-*/
-
-
-PG_FUNCTION_INFO_V1(gdd_describe_myself);
-
-Datum
-gdd_describe_myself(PG_FUNCTION_ARGS)
-{
-	Datum result;
-
-	result = gdd_describe_int(MyProc);
-	if (result)
-		PG_RETURN_DATUM(result);
-	else
-		PG_RETURN_NULL(result);
 }
 
 /*
@@ -685,7 +647,7 @@ gdd_if_has_external_lock_int(PGPROC *proc)
 	}
 	else
 		has_external_lock_property = false;
-	tupd = CreateTemplateTupleDesc(2);
+	tupd = CreateTemplateTupleDesc(NCOLUMN);
 	ii = 1;
 	TupleDescInitEntry(tupd, ii++, "has_external_lock", BOOLOID, -1, 0);
 	TupleDescInitEntry(tupd, ii++, "has_external_lock_property", BOOLOID, -1, 0);

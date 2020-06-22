@@ -14,5 +14,5 @@ select * from gdd_if_has_external_lock_myself();
 -- Test OK upto here, June 16, 2020.
 -- K.Suzuki 次の関数書いていなかった。
 select * from gdd_describe_myself();
-select gdd_test_deadlock_check_myhself();
+select gdd_test_deadlock_check_myself();
 select gdd_test_external_lock_unwait_myself('a');

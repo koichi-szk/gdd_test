@@ -290,14 +290,14 @@ CREATE OR REPLACE FUNCTION
  */
 DROP FUNCTION IF EXISTS gdd_test_deadlock_check_pid(int);
 CREATE OR REPLACE FUNCTION
-	gdd_test_dead_lock_check_pid(int)
+	gdd_test_deadlock_check_pid(int)
 	RETURNS CSTRING
 	LANGUAGE c VOLATILE
 	AS 'gdd_test.so', 'gdd_test_deadlock_check_pid';
 
 DROP FUNCTION IF EXISTS gdd_test_deadlock_check_myself();
 CREATE OR REPLACE FUNCTION
-	gdd_test_dead_lock_check_self()
+	gdd_test_deadlock_check_self()
 	RETURNS CSTRING
 	LANGUAGE c VOLATILE
 	AS 'gdd_test.so', 'gdd_test_deadlock_check_myself';
