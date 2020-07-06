@@ -75,6 +75,7 @@ static bool gdd_test_external_lock_set_properties_int(char *label, PGPROC *proc,
 										  int target_pgprocno, int target_pid, int target_xid, bool update_flag);
 static Datum gdd_describe_int(PGPROC *proc);
 
+#if 0
 /*
  * CREATE FUNCTION gdd_external_lock_test_begin(outfname text)
  *		VOLATILE
@@ -102,9 +103,11 @@ gdd_test_init_test(PG_FUNCTION_ARGS)
 	fprintf(outf, "%s: beginning global deadlock detection test.\n", __func__);
 	PG_RETURN_INT32(0);
 }
+#endif
 
 
 
+#if 0
 /*
  * CREATE FUNCTION gdd_external_lock_test_finish()
  *		VOLATILE
@@ -127,6 +130,7 @@ gdd_test_finish_test(PG_FUNCTION_ARGS)
 	outf = NULL;
 	PG_RETURN_INT32(0);
 }
+#endif
 
 
 /*
@@ -188,9 +192,6 @@ gdd_test_show_myself_int(PGPROC *proc)
 
 	for(ii = 0; ii < 4; ii++)
 		Values[ii] = &values[ii][0];
-	fprintf(outf, "%s(): PGPROC: %016lx, pid: %d, pgprocno: %d, lxid: %d\n", __func__,
-				(unsigned long)proc, proc->pid, proc->pgprocno, proc->lxid);
-	fflush(outf);
 	database_system_id = get_database_system_id();
 	ii = 1; 
 	tupd = CreateTemplateTupleDesc(4);
@@ -311,12 +312,6 @@ gdd_test_set_locktag_external_int(char *label, PGPROC *target_proc, bool increme
 
 	for (ii = 0; ii < NCOLNUM; ii++)
 		Values[ii] = &values[ii][0];
-	fprintf(outf, "%s(): label:'%s', field1:%d, field2: %d, field3: %d, field4: %d, locktype: %s, lockemthod: %d.\n",
-			    "set_locktag_external",
-				label, 
-				locktag.locktag_field1, locktag.locktag_field2, locktag.locktag_field3, locktag.locktag_field4,
-				locktagTypeName(locktag.locktag_type), locktag.locktag_lockmethodid);
-	fflush(outf);
 	tupd = CreateTemplateTupleDesc(7);
 	ii = 1;
 	TupleDescInitEntry(tupd, ii++, "label", TEXTOID, -1, 0);
@@ -518,7 +513,7 @@ static Datum
 gdd_describe_int(PGPROC *proc)
 {
 #define CHARLEN 32
-#define NCOLUMN 11
+#define NCOLUMN 10
 	/* outoput */
 	TupleDesc        tupd;
 	HeapTupleData    tupleData;
@@ -547,7 +542,6 @@ gdd_describe_int(PGPROC *proc)
 	snprintf(values[ii++], CHARLEN, "%d", proc->pid);
 	snprintf(values[ii++], CHARLEN, "%d", proc->pgprocno);
 	strncpy(values[ii++], waitStatusName(proc->waitStatus), CHARLEN);
-	snprintf(values[ii++], CHARLEN, "%d", proc->pgprocno);
 	snprintf(values[ii++], CHARLEN, "%d", proc->waitLock ? proc->waitLock->tag.locktag_field1 : -1);
 	snprintf(values[ii++], CHARLEN, "%d", proc->waitLock ? proc->waitLock->tag.locktag_field2 : -1);
 	snprintf(values[ii++], CHARLEN, "%d", proc->waitLock ? proc->waitLock->tag.locktag_field3 : -1);
@@ -1288,14 +1282,14 @@ find_pgproc(int pid)
 	{
 		if (ProcGlobal->allProcs[ii].pid == pid)
 		{
-			fprintf(outf, "%s(): found duplcate pgproc, pid = %d, pgprocno = %d, why?\n",
+			elog(WARNING, "%s(): found duplcate pgproc, pid = %d, pgprocno = %d, why?\n",
 					   __func__, pid, ii);
 			break;
 		}
 	}
 	LWLockRelease(ProcArrayLock);
 	if (pgproc == NULL)
-		fprintf(outf, "%s(): failed to find PGPROC, pid=%d.\n", __func__, pid);
+		elog(WARNING, "%s(): failed to find PGPROC, pid=%d.\n", __func__, pid);
 	return proc;
 }
 
@@ -1351,6 +1345,8 @@ deadLockCheckResultName(DeadLockState res)
 			return "DS_BLOCKED_BY_AUTOVACUUM";
 		case DS_EXTERNAL_LOCK:           /* waiting for remote transaction, need global deadlock detection */
 			return "DS_EXTERNAL_LOCK";
+		case DS_DEADLOCK_INFO:           /* waiting for remote transaction, need global deadlock detection */
+			return "DS_DEADLOCK_INFO";
 		case DS_GLOBAL_ERROR:            /* Used only to report internal error in global deadlock detection */
 			return "DS_GLOBAL_ERROR";
 	}

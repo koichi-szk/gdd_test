@@ -19,9 +19,13 @@ touch $LOGFILE
 export COPT='-O0 -g3'
 cd $SRCDIR
 echo "--------------- Postgres Configure ---------------------------------------" | tee -a $LOGFILE
+#if [ $CLR_OPT == "y" ]; then
+#	echo "./configure --prefix=$TARGET --enable-debug --with-perl --with-python --with-openssl" |& tee -a $LOGFILE
+#	./configure --prefix=$TARGET --enable-debug --with-perl --with-python --with-openssl |& tee -a $LOGFILE
+#fi
 if [ $CLR_OPT == "y" ]; then
-	echo "./configure --prefix=$TARGET --enable-debug --with-perl --with-python --with-openssl" |& tee -a $LOGFILE
-	./configure --prefix=$TARGET --enable-debug --with-perl --with-python --with-openssl |& tee -a $LOGFILE
+	echo "./configure --prefix=$TARGET --enable-debug --with-perl --with-python " |& tee -a $LOGFILE
+	./configure --prefix=$TARGET --enable-debug --with-perl --with-python |& tee -a $LOGFILE
 fi
 echo "--------------- Posatgres Build ------------------------------------------" | tee -a $LOGFILE
 if [ "$CLR_OPT" == "y" ];then

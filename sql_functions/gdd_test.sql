@@ -1,17 +1,21 @@
 /*
  * Test start - end
  */
+/*
 DROP FUNCTION IF EXISTS gdd_test_init_test(cstring);
 CREATE OR REPLACE FUNCTION gdd_test_init_test(cstring)
 	RETURNS INT
 	LANGUAGE c VOLATILE
 	AS 'gdd_test.so', 'gdd_test_init_test';
+*/
 
+/*
 DROP FUNCTION IF EXISTS gdd_test_finish_test();
 CREATE OR REPLACE FUNCTION gdd_test_finish_test()
 	RETURNS INT
 	LANGUAGE c VOLATILE
 	AS 'gdd_test.so', 'gdd_test_finish_test';
+*/
 
 /*
  * Display process and txn info
@@ -297,7 +301,8 @@ CREATE OR REPLACE FUNCTION
 
 DROP FUNCTION IF EXISTS gdd_test_deadlock_check_myself();
 CREATE OR REPLACE FUNCTION
-	gdd_test_deadlock_check_self()
+	gdd_test_deadlock_check_myself()
 	RETURNS CSTRING
 	LANGUAGE c VOLATILE
 	AS 'gdd_test.so', 'gdd_test_deadlock_check_myself';
+
