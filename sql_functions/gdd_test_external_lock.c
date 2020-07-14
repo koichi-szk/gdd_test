@@ -46,10 +46,7 @@ typedef struct LOCKTAG_DICT
 
 static LOCKTAG_DICT	*locktag_dict_head = NULL;
 static LOCKTAG_DICT	*locktag_dict_tail = NULL;
-static char		*outfilename = NULL;
-static FILE		*outf = NULL;
 static PGPROC	*pgproc;
-static int64	 database_system_id;
 
 static Datum gdd_test_external_lock_acquire_int(char *label, PGPROC *proc);
 static Datum gdd_test_set_locktag_external_int(char *label, PGPROC *target_proc, bool increment);

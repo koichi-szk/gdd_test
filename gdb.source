@@ -51,4 +51,4 @@ b pg_global_deadlock_check_from_remote
 b pg_global_deadlock_recheck_from_remote
 b pg_global_deadlock_check_describe_backend
 b GetDeadLockInfo
-lock.c:findExternalLockFileName
+b copy_global_wfg

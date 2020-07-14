@@ -1,4 +1,5 @@
 #!/bin/bash
+cd $HOME/gdd_test
 . ./conf.sh
 cd $TEST_HOME
 pgmode pg12_gdd

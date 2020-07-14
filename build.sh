@@ -61,3 +61,6 @@ make |& tee -a $LOGFILE
 echo "--------------- Test tool install ----------------------------------------" | tee -a $LOGFILE
 echo "make install" |& tee -a $LOGFILE
 make install |& tee -a $LOGFILE
+cd $TEST_HOME
+echo "cc -o sql sql.c"
+cc -o sql sql.c
