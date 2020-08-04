@@ -47,6 +47,7 @@ gtags
 echo "htags -n -h --tabs 4" |& tee -a $LOGFILE
 htags -n -h --tabs 4
 cp -r HTML $HTAG_DIR/$TARGET_TAG
+rm -r HTML
 echo "--------------- Test tool build ------------------------------------------" | tee -a $LOGFILE
 echo "cd $TEST_HOME" |& tee -a $LOGFILE
 cd $TEST_HOME

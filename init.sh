@@ -7,6 +7,7 @@ mkdir -p $BUILD_LOGDIR
 LOGFILE=$(logfile_gen.sh $INIT_LOGFILE_BODY $BUILD_LOGDIR)
 touch $LOGFILE
 
+echo "===============<< $(hostname) >>===================="
 
 cd $TEST_HOME
 pgmode pg12_gdd
@@ -24,23 +25,31 @@ createdb koichi |& tee -a $LOGFILE
 echo "psql -f $TESTSRC/gdd_test.sql" |& tee -a $LOGFILE
 psql -f $TESTSRC/gdd_test.sql |& tee -a $LOGFILE
 
+TMP=/tmp/$$
+TMP_BASE=$(basename $TMP)
 
 HOSTS=(ubuntu00 ubuntu01 ubuntu02 ubuntu03 ubuntu04)
 for h in "${HOSTS[@]}"; do
-	ssh $h << EOF
+	echo "=============<< $h >>===================="
+	ssh $h << EOF > /dev/null 2>&1
 		cd $TEST_HOME
 		pgmode pg12_gdd
-		pg_ctl status -w -D $DBDIR
+		pg_ctl status -w -D $DBDIR > $TMP 2>&1
 		if [ $? == 0 ]; then
-			pg_ctl stop -D $DBDIR
+			pg_ctl stop -D $DBDIR >> $TMP 2>&1
 		fi
 		rm -rf $DBDIR
-		initdb $DBDIR
+		initdb $DBDIR >> $TMP
 		cp pg_hba.conf $DBDIR
 		cat postgresql.conf.addition >> $DBDIR/postgresql.conf
-		pg_ctl start -D $DBDIR
-		createdb koichi
+		pg_ctl start -D $DBDIR >> $TMP 2>&1 &
+		wait
+		createdb koichi >> $TMP 2>&1
 EOF
 	psql -h $h -f $TESTSRC/gdd_test.sql
+	scp $h:$TMP /tmp/$TMP_BASE
+	cat /tmp/$TMP_BASE
+	rm /tmp/$TMP_BASE
+	ssh $h "rm $TMP" > /dev/null 2>&1
 done
 

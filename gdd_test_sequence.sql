@@ -102,14 +102,16 @@ LOCK TABLE t1 IN ACCESS EXCLUSIVE MODE;
 
 -- シナリオ3 ステップ１: 全体の準備、どこでやってもいい。
 
-\x
+psql
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1 (a int, b int);
 INSERT INTO t1 values (0, 0), (1, 1);
+\q
 
 -- シナリオ3 ステップ2: Transaction 3 の準備: ksubuntu で実行 --------------------------------------------------------------
 
 -- ksubuntu
+psql
 \x
 BEGIN;
 select * from gdd_test_show_myself();
@@ -119,12 +121,14 @@ select * from gdd_test_show_myself();
 
 -- ubuntu00
 
+psql -h ubuntu00
 \x
 BEGIN;
 select * from gdd_test_external_lock_acquire_myself('b');
 -- 以下の pgprocno, pid, xid は上記の gdd_test_show_myself() で得られた T3 の結果を使う
 -- sql b << EOF で、次のコマンドを作ってくれる
-select gdd_test_external_lock_set_properties_myself('b', 'host=ksubuntu dbname=koichi user=koichi', pgprocno, pid, xid, true);
+-- select gdd_test_external_lock_set_properties_myself('b', 'host=ksubuntu dbname=koichi user=koichi', pgprocno, pid, xid, true);
+select gdd_test_external_lock_set_properties_myself('b', 'host=ksubuntu dbname=koichi user=koichi', 99, 17296, 77, true);
 select * from gdd_test_show_registered_external_lock();
 select * from gdd_if_has_external_lock_myself();
 select gdd_test_external_lock_wait_myself('b');
@@ -136,14 +140,15 @@ select * from gdd_test_show_myself();
 -- シナリオ3 ステップ4: Transaction 1 の準備 ------------------------------------------------------------------------
 
 -- ksubuntu
+psql
 \x
 BEGIN;
 LOCK TABLE t1 IN ACCESS EXCLUSIVE MODE;
 select * from gdd_test_external_lock_acquire_myself('a');
 -- 以下の pgprocno, pid, xid は上記の gdd_test_show_myself() で得られた T2 の結果を使う
-
 -- sql a << EOF で、次のコマンドを作ってくれる
-select gdd_test_external_lock_set_properties_myself('a', 'host=ubuntu00 dbname=koichi user=koichi', 99, 8451, 118, true);
+-- select gdd_test_external_lock_set_properties_myself('a', 'host=ubuntu00 dbname=koichi user=koichi', 99, 8451, 118, true);
+select gdd_test_external_lock_set_properties_myself('a', 'host=ubuntu00 dbname=koichi user=koichi', 99, 318, 75, true);
 select * from gdd_test_show_registered_external_lock();
 select * from gdd_if_has_external_lock_myself();
 select gdd_test_external_lock_wait_myself('a');
@@ -158,8 +163,8 @@ select * from gdd_test_show_myself();
 
 -- 
 -- ksubuntu
--- == 1 == まず gdb 起動して Transaction 3 にアタッチする。
-BEGIN;
+-- == 1 ==	まず gdb 起動して Transaction 3 にアタッチする。
+--			ブレイクポイントは scenario3.source にある
 LOCK TABLE t1 IN ACCESS EXCLUSIVE MODE;
 
 -- 			これで T3 上の GlobalDeadlockCheck が動く。これをトレースすると、T2 に向けて GlobalDeadlockCheckRemote が
