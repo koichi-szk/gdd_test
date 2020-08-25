@@ -33,7 +33,9 @@ PG_FUNCTION_INFO_V1(pg_wait_external_lock_array);
 
 static	bool parse_locktag_array(ArrayType *array, LOCKTAG *locktag);
 static	bool parse_locktag_tuple(HeapTupleHeader rec, LOCKTAG *locktag);
+#if 0
 static Datum locktag2Datum_tuple(LOCKTAG *locktag);
+#endif
 static Datum locktag2Datum_array(LOCKTAG *locktag);
 
 /*
@@ -262,6 +264,7 @@ locktag2Datum_array(LOCKTAG *locktag)
 	return(makeArrayResult(astate, CurrentMemoryContext));
 }
 
+#if 0
 #define SZ 32
 static Datum
 locktag2Datum_tuple(LOCKTAG *locktag)
@@ -286,3 +289,4 @@ locktag2Datum_tuple(LOCKTAG *locktag)
 	return(TupleGetDatum(TupleDescGetSlot(tupd), tuple));
 }
 #undef SZ
+#endif
