@@ -100,6 +100,12 @@ LOCK TABLE t1 IN ACCESS EXCLUSIVE MODE;
 -- トランザクション2 の External Lock Property
 -- select gdd_test_external_lock_set_properties_myself('a', 'host=ubuntu00 dbname=koichi user=koichi', pgprocno, pid, xid, true);`
 
+--- 端末の準備 -- それぞれ別のタブ。~koichi/bin/title に x-terminal でのタイトル設定方法がある。
+
+1. T1, T2, T3
+2. GDB-T1, GDB-T2-worker, GDB-T2, GDB-T3-worker, GDB-T3
+3. gdd_test_sequence.sql, GIT廻り, テストコントロール, lock.c, lock.h
+
 -- シナリオ3 ステップ１: 全体の準備、どこでやってもいい。
 
 psql
@@ -128,7 +134,7 @@ select * from gdd_test_external_lock_acquire_myself('b');
 -- 以下の pgprocno, pid, xid は上記の gdd_test_show_myself() で得られた T3 の結果を使う
 -- sql b << EOF で、次のコマンドを作ってくれる
 -- select gdd_test_external_lock_set_properties_myself('b', 'host=ksubuntu dbname=koichi user=koichi', pgprocno, pid, xid, true);
-select gdd_test_external_lock_set_properties_myself('b', 'host=ksubuntu dbname=koichi user=koichi', 99, 17296, 77, true);
+select gdd_test_external_lock_set_properties_myself('b', 'host=ksubuntu dbname=koichi user=koichi', 99, 423307, 78, true);
 select * from gdd_test_show_registered_external_lock();
 select * from gdd_if_has_external_lock_myself();
 select gdd_test_external_lock_wait_myself('b');
@@ -148,7 +154,7 @@ select * from gdd_test_external_lock_acquire_myself('a');
 -- 以下の pgprocno, pid, xid は上記の gdd_test_show_myself() で得られた T2 の結果を使う
 -- sql a << EOF で、次のコマンドを作ってくれる
 -- select gdd_test_external_lock_set_properties_myself('a', 'host=ubuntu00 dbname=koichi user=koichi', 99, 8451, 118, true);
-select gdd_test_external_lock_set_properties_myself('a', 'host=ubuntu00 dbname=koichi user=koichi', 99, 318, 75, true);
+select gdd_test_external_lock_set_properties_myself('a', 'host=ubuntu00 dbname=koichi user=koichi', 99, 19562, 74, true);
 select * from gdd_test_show_registered_external_lock();
 select * from gdd_if_has_external_lock_myself();
 select gdd_test_external_lock_wait_myself('a');
