@@ -101,11 +101,15 @@ LOCK TABLE t1 IN ACCESS EXCLUSIVE MODE;
 -- select gdd_test_external_lock_set_properties_myself('a', 'host=ubuntu00 dbname=koichi user=koichi', pgprocno, pid, xid, true);`
 
 -- シナリオ3 ステップ１: 全体の準備、どこでやってもいい。
+--- 以下はすでに init.sh に含まれているので、不要。
 
 psql
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1 (a int, b int);
 INSERT INTO t1 values (0, 0), (1, 1);
+DROP TABLE IF EXISTS t2;
+CREATE TABLE t2 (a int, b int);
+INSERT INTO t2 values (0, 0), (1, 1);
 \q
 
 -- シナリオ3 ステップ2: Transaction 3 の準備: ksubuntu で実行 --------------------------------------------------------------
@@ -128,7 +132,7 @@ select * from gdd_test_external_lock_acquire_myself('b');
 -- 以下の pgprocno, pid, xid は上記の gdd_test_show_myself() で得られた T3 の結果を使う
 -- sql b << EOF で、次のコマンドを作ってくれる
 -- select gdd_test_external_lock_set_properties_myself('b', 'host=ksubuntu dbname=koichi user=koichi', pgprocno, pid, xid, true);
-select gdd_test_external_lock_set_properties_myself('b', 'host=ksubuntu dbname=koichi user=koichi', 99, 377301, 108, true);
+select gdd_test_external_lock_set_properties_myself('b', 'host=ksubuntu dbname=koichi user=koichi', 99, 294948, 79, true);
 select * from gdd_test_show_registered_external_lock();
 select * from gdd_if_has_external_lock_myself();
 select gdd_test_external_lock_wait_myself('b');
@@ -148,7 +152,7 @@ select * from gdd_test_external_lock_acquire_myself('a');
 -- 以下の pgprocno, pid, xid は上記の gdd_test_show_myself() で得られた T2 の結果を使う
 -- sql a << EOF で、次のコマンドを作ってくれる
 -- select gdd_test_external_lock_set_properties_myself('a', 'host=ubuntu00 dbname=koichi user=koichi', 99, 8451, 118, true);
-select gdd_test_external_lock_set_properties_myself('a', 'host=ubuntu00 dbname=koichi user=koichi', 99, 36584, 104, true);
+select gdd_test_external_lock_set_properties_myself('a', 'host=ubuntu00 dbname=koichi user=koichi', 99, 30776, 72, true);
 select * from gdd_test_show_registered_external_lock();
 select * from gdd_if_has_external_lock_myself();
 select gdd_test_external_lock_wait_myself('a');

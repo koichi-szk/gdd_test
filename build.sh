@@ -1,10 +1,13 @@
 #!/bin/bash
 
 CLR_OPT=n
-while getopts "c" OPT; do
+OPT_FLAG=n
+while getopts "co" OPT; do
 	case $OPT in
 		"c")
 			CLR_OPT=y;;
+		"o")
+			OPT_FLAG=y;;
 		*)
 			echo "Invalid option."
 			exit 1;;
@@ -16,7 +19,11 @@ cd /home/koichi/gdd_test
 mkdir -p $BUILD_LOGDIR
 LOGFILE=$(logfile_gen.sh $BUILD_LOGFILE_BODY $BUILD_LOGDIR)
 touch $LOGFILE
-export COPT='-O0 -g3'
+if [ "$OPT_FLAG" == "n" ]; then
+	export COPT='-O0 -g3'
+else
+	export COPT=""
+fi
 cd $SRCDIR
 echo "--------------- Postgres Configure ---------------------------------------" | tee -a $LOGFILE
 #if [ $CLR_OPT == "y" ]; then
