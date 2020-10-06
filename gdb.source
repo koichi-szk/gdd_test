@@ -47,7 +47,8 @@
 #b DeadLockReport
 #b globalDeadlockCheckMode
 #b GlobalDeadlockCheck
-#b GlobalDeadlockCheckRemote
+b GlobalDeadlockCheck_int
+b GlobalDeadlockCheckRemote
 #b globalDeadlockCheckFromRemote
 #b pg_global_deadlock_check_from_remote
 #b pg_global_deadlock_check_describe_backend
@@ -55,5 +56,3 @@
 #b GetDeadLockInfo
 #b copy_global_wfg
 #b gddSystem
-b deadlock_connectDownstream
-b gdd_check_downstream
