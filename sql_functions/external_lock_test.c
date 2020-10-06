@@ -19,6 +19,7 @@
 #include "storage/lock.h"
 #include "storage/proc.h"
 
+#include "utils/array.h"
 #include "utils/typcache.h"
 
 /* Function definitions */
