@@ -10,7 +10,7 @@ touch $LOGFILE
 echo "===============<< $(hostname) >>===================="
 
 cd $TEST_HOME
-pgmode pg12_gdd
+pgmode pg13_gdd
 pg_ctl status -D $DBDIR
 if [ $? == 0 ]; then
 	pg_ctl stop -D $DBDIR
@@ -33,7 +33,7 @@ for h in "${HOSTS[@]}"; do
 	echo "=============<< $h >>===================="
 	ssh $h << EOF > /dev/null 2>&1
 		cd $TEST_HOME
-		pgmode pg12_gdd
+		pgmode pg13_gdd
 		pg_ctl status -w -D $DBDIR > $TMP 2>&1
 		if [ $? == 0 ]; then
 			pg_ctl stop -D $DBDIR >> $TMP 2>&1

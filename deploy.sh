@@ -2,7 +2,7 @@
 . ./conf.sh
 
 PG_INSTALLHOME=/home/koichi
-PG_INSTALLDIR=pg12_gdd
+PG_INSTALLDIR=pg13_gdd
 GDD_TESTHOME=/home/koichi
 GDD_TESTDIR=gdd_test
 HOSTS=(ubuntu00 ubuntu01 ubuntu02 ubuntu03 ubuntu04)
