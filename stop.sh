@@ -2,7 +2,7 @@
 cd $HOME/gdd_test
 . ./conf.sh
 cd $TEST_HOME
-pgmode pg12_gdd
+pgmode pg13_gdd
 pg_ctl status -D $DBDIR >& /dev/null
 if [ $? == 0 ]; then
 	pg_ctl stop -D $DBDIR
@@ -17,7 +17,7 @@ for h in "${HOSTS[@]}"; do
 	echo "============<< $h >>===================="
 	ssh $h << EOF > /dev/null 2>&1
 		cd $TEST_HOME
-		pgmode pg12_gdd
+		pgmode pg13_gdd
 		pg_ctl stop -D $DBDIR > $TMP 2>&1 &
 		wait
 EOF
