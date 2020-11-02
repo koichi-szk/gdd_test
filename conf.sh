@@ -11,3 +11,5 @@ BUILD_LOGFILE_BODY=gdd_build
 INIT_LOGFILE_BODY=gdd_test_init
 HTAG_DIR=/hdd2/koichi/postgres_htag
 TARGET_TAG=PG13_GDD
+GENERATOR_SRC=./general_scenario_generator
+export COPT='-O0 -g3'

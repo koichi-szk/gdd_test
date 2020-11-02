@@ -72,3 +72,16 @@ make install |& tee -a $LOGFILE
 cd $TEST_HOME
 echo "cc -o sql sql.c"
 cc -o sql sql.c
+echo "--------------- Scenario Generator build ------------------------------------------" | tee -a $LOGFILE
+echo "cd $TEST_HOME" |& tee -a $LOGFILE
+cd $TEST_HOME
+echo "cd $GENERATOR_SRC" |& tee -a $LOGFILE
+cd $GENERATOR_SRC
+if [ "$CLR_OPT" == "y" ];then
+	echo "make clean" |& tee -a $LOGFILE
+	make clean |& tee -a $LOGFILE
+fi
+echo "make" |& tee -a $LOGFILE
+make |& tee -a $LOGFILE
+echo "make install" |& tee -a $LOGFILE
+make install |& tee -a $LOGFILE
