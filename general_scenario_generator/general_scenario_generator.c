@@ -54,9 +54,6 @@ typedef struct RemoteSequence
 	SequenceStep	**sequenceStep;
 } RemoteSequence;
 
-static void
-errHandler(char *format, ...);
-
 int	auto_label = 0;
 
 char	*inFileName = NULL;
@@ -71,7 +68,7 @@ FILE	*inF;
 
 static void connectDatabase(RemoteSequence *remoteSequence);
 static void connectRemoteSequence(RemoteSequence *mySequence, RemoteSequence *parent);
-static void errHandler(char *format, ...) __attribute__((format(printf, 1, 2)));
+static void errHandler(bool return_f, char *format, ...) __attribute__((format(printf, 2, 3)));
 static void expandRemoteSequence(RemoteSequence *remoteSequence);
 static char *getString(char *inata, char **str);
 static char *getWord(char *indata, char **word);
@@ -87,7 +84,7 @@ static void setCommand(RemoteSequence *sequence, char *command);
 static char *skip_sp(char *indata);
 static void unWaitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent);
 static void waitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent);
-static void PQexecErrCheck(PGresult *res, char *cmd, char *dsn);
+static bool PQexecErrCheck(PGresult *res, char *cmd, char *dsn, bool return_f);
 /*
  * -f FILE, --input FILE: read sequence from the file.  '-' means stdin and it's the default..
  * -o FILE, --output FILE: write output to the file. '-' means stdout and it's the default.
@@ -157,7 +154,7 @@ main(int argc, char *argv[])
 	{
 		inF = fopen(inFileName, "r");
 		if (inF == NULL)
-			errHandler("Cannot open input file '%s', %s\n", inFileName, strerror(errno));
+			errHandler(false, "Cannot open input file '%s', %s\n", inFileName, strerror(errno));
 	}
 	if (outFileName == NULL)
 		outF = stdout;
@@ -168,7 +165,7 @@ main(int argc, char *argv[])
 		else
 			outF = fopen(inFileName, "w");
 		if (outF == NULL)
-			errHandler("Cannot open output file '%s', %s\n", outFileName, strerror(errno));
+			errHandler(false, "Cannot open output file '%s', %s\n", outFileName, strerror(errno));
 	}
 	input_sequence = read_file(inF);
 	fclose(inF);
@@ -189,7 +186,7 @@ main(int argc, char *argv[])
 
 #define MSGLEN 1024
 static void
-errHandler(char *format, ...)
+errHandler(bool return_f, char *format, ...)
 {
 	va_list	 ap;
 	char	 msg[MSGLEN+1];
@@ -198,6 +195,8 @@ errHandler(char *format, ...)
 	vsnprintf(msg, MSGLEN, format, ap);
 	va_end(ap);
 	fprintf(stderr, "%s\n", msg);
+	if (return_f)
+		return;
 	exit(1);
 }
 #undef MSGLEN
@@ -251,19 +250,19 @@ connectRemoteSequence(RemoteSequence *mySequence, RemoteSequence *parent)
 	/* Connect to the database for mySequence */
 	fprintf(outF, "Connecting to database '%s'\n", mySequence->dsn);
 	if (parent && parent->conn == NULL)
-		errHandler("Parent is not connected to the databae '%s'.", parent->dsn);
+		errHandler(false, "Parent is not connected to the databae '%s'.", parent->dsn);
 	if (mySequence->conn)
-		errHandler("Alread connected to the database, '%s'.", mySequence->dsn);
+		errHandler(false, "Already connected to the database, '%s'.", mySequence->dsn);
 	connectDatabase(mySequence);
 
 	/* BEGIN */
 	res = PQexec(mySequence->conn, BEGIN_STMT);
-	PQexecErrCheck(res, BEGIN_STMT, mySequence->dsn);
+	PQexecErrCheck(res, BEGIN_STMT, mySequence->dsn, false);
 	PQclear(res);
 
 	/* Get target database transaction status */
 	res = PQexec(mySequence->conn, SHOW_MYSELF_STMT);
-	PQexecErrCheck(res, SHOW_MYSELF_STMT, mySequence->dsn);
+	PQexecErrCheck(res, SHOW_MYSELF_STMT, mySequence->dsn, false);
 
 
 	nn = 0;
@@ -285,17 +284,23 @@ connectRemoteSequence(RemoteSequence *mySequence, RemoteSequence *parent)
 #undef SHOW_MYSELF_STMT
 }
 
-static void
-PQexecErrCheck(PGresult *res, char *cmd, char *dsn)
+static bool
+PQexecErrCheck(PGresult *res, char *cmd, char *dsn, bool return_f)
 {
 	ExecStatusType	status;
 
 	if (res == NULL)
-		errHandler("Serious error occurred in execute '%s' for database '%s'.", cmd, dsn);
+	{
+		errHandler(return_f, "Serious error occurred in execute '%s' for database '%s'.", cmd, dsn);
+		return false;
+	}
 	status = PQresultStatus(res);
 	if ((status != PGRES_COMMAND_OK) && (status != PGRES_TUPLES_OK))
-		errHandler("Query execution error: '%s', at '%s', %s.", cmd, dsn, PQresultErrorMessage(res));
-	return;
+	{
+		errHandler(return_f, "Query execution error: '%s', at '%s', %s.", cmd, dsn, PQresultErrorMessage(res));
+		return false;
+	}
+	return true;
 }
 
 static void
@@ -308,7 +313,7 @@ waitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent)
 	snprintf(cmd, CMDMAX, "select * from gdd_test_external_lock_acquire_myself('%s');", parent->label);
 
 	res = PQexec(parent->conn, cmd);
-	PQexecErrCheck(res, cmd, parent->dsn);
+	PQexecErrCheck(res, cmd, parent->dsn, false);
 	PQclear(res);
 
 	/* Setup lock property */
@@ -320,13 +325,13 @@ waitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent)
 						  remote->pid,
 						  remote->lxid);
 	res = PQexec(parent->conn, cmd);
-	PQexecErrCheck(res, cmd, parent->dsn);
+	PQexecErrCheck(res, cmd, parent->dsn, false);
 	PQclear(res);
 
 	/* Wait external lock */
 	snprintf(cmd, CMDMAX, "select gdd_test_external_lock_wait_myself('%s');", parent->label);
 	res = PQexec(parent->conn, cmd);
-	PQexecErrCheck(res, cmd, parent->dsn);
+	PQexecErrCheck(res, cmd, parent->dsn, false);
 	PQclear(res);
 
 	parent->has_external_lock = true;
@@ -343,7 +348,7 @@ unWaitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent)
 						  parent->label,
 						  remote->pgprocno);
 	res = PQexec(parent->conn, cmd);
-	PQexecErrCheck(res, cmd, parent->dsn);
+	PQexecErrCheck(res, cmd, parent->dsn, false);
 	PQclear(res);
 
 	parent->has_external_lock = false;
@@ -403,13 +408,20 @@ runQuery(PGconn *conn, char *query)
 
 	res = PQexec(conn, query);
 	if (res == NULL)
-		errHandler("Serious error in executing '%s'", query);
+		errHandler(false, "Serious error in executing '%s'", query);
 	status = PQresultStatus(res);
 	if ((status != PGRES_COMMAND_OK) && (status != PGRES_TUPLES_OK))
+	{
 		fprintf(outF, "Query '%s' failed.  %s\n", query, PQresultErrorMessage(res));
+		PQclear(res);
+		res = PQexec(conn, "abort;");
+		PQclear(res);
+		return;
+	}
 	else
 		fprintf(outF, "Query '%s' done successfully.\n", query);
 	PQclear(res);
+	return;
 }
 
 static void
@@ -421,7 +433,7 @@ connectDatabase(RemoteSequence *remoteSequence)
 	{
 		conn = PQconnectdb(remoteSequence->dsn);
 		if ((conn == NULL) || (PQstatus(conn) == CONNECTION_BAD))
-			errHandler("Failed to connect to remote database '%s' not reachable.",
+			errHandler(false, "Failed to connect to remote database '%s' not reachable.",
 					remoteSequence->dsn);
 	}
 	remoteSequence->conn = conn;
@@ -502,7 +514,7 @@ parseRemoteSequence(char *indata, RemoteSequence **sequence)
 
 			indata = getWord(indata, &word);
 			if (word == NULL)
-				errHandler("Input syntax error.");
+				errHandler(false, "Input syntax error.");
 			if (strcmp(word, "connect") == 0)
 			{
 				indata = parseRemoteSequence(old_ptr, &sub_sequence);
@@ -525,7 +537,7 @@ parseRemoteSequence(char *indata, RemoteSequence **sequence)
 				return indata;
 			}
 			else
-				errHandler("Input syntax error.");
+				errHandler(false, "Input syntax error.");
 		}
 	}
 	return NULL;
@@ -747,7 +759,7 @@ my_realloc(void *ptr, size_t size)
 	else
 		rv = realloc(ptr, size);
 	if (rv == NULL)
-		errHandler("Out of memory.");
+		errHandler(false, "Out of memory.");
 	return rv;
 }
 
