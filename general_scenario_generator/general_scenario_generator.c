@@ -62,9 +62,13 @@ bool	 parse_only = false;
 bool	 write_diagnose = false;
 bool	 stay = false;
 bool	 add_to_output = false;
+bool	 interactive = false;
 
 FILE	*outF;
 FILE	*inF;
+
+#define INBUFSZ 512
+char	inbuf[INBUFSZ];
 
 static void connectDatabase(RemoteSequence *remoteSequence);
 static void connectRemoteSequence(RemoteSequence *mySequence, RemoteSequence *parent);
@@ -77,14 +81,16 @@ static char *parseRemoteSequence(char *indata, RemoteSequence **sequence);
 static char *peekChar(char *indata, char *peeked);
 static char *read_file(FILE *f);
 static void printRemoteSequence(RemoteSequence *sequence, int level);
-static void runCommand(RemoteSequence *sequence, char *command);
-static void runRemoteSequence(RemoteSequence *sequence, RemoteSequence *parent);
-static void runQuery(PGconn *conn, char *query);
+static bool runCommand(RemoteSequence *sequence, char *command);
+static bool runRemoteSequence(RemoteSequence *sequence, RemoteSequence *parent);
+static bool runQuery(PGconn *conn, char *query);
 static void setCommand(RemoteSequence *sequence, char *command);
 static char *skip_sp(char *indata);
 static void unWaitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent);
 static void waitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent);
 static bool PQexecErrCheck(PGresult *res, char *cmd, char *dsn, bool return_f);
+static void enterKey(char *prompt);
+static void releaseExternalLock(RemoteSequence *remote);
 /*
  * -f FILE, --input FILE: read sequence from the file.  '-' means stdin and it's the default..
  * -o FILE, --output FILE: write output to the file. '-' means stdout and it's the default.
@@ -105,16 +111,18 @@ main(int argc, char *argv[])
 	{
 		{"input",	required_argument,	0,	'f' },
 		{"output",	required_argument,	0,	'o' },
-		{"add",		no_argument,		0,	'a' },
+		{"add",		required_argument,	0,	'a' },
 		{"diagnose",	no_argument,	0,	'd' },
 		{"test",	no_argument,		0,	't' },
 		{"stay",	no_argument,		0,	's' },
+		{"interactive", no_argument,	0,  'i' },
+		{"batch", no_argument,			0,  'b' },
 		{0,			0,					0,	0   }
 	};
 
 	while(1)
 	{
-		c = getopt_long(argc, argv, "f:o:adts",
+		c = getopt_long(argc, argv, "f:o:adtsib",
 					    long_options, &option_index);
 		if (c == -1)
 			break;
@@ -124,6 +132,7 @@ main(int argc, char *argv[])
 				if (inFileName)
 					free(inFileName);
 				inFileName = strdup(optarg);
+				add_to_output = false;
 				break;
 			case 'o':
 				if (outFileName)
@@ -132,6 +141,9 @@ main(int argc, char *argv[])
 				break;
 			case 'a':
 				add_to_output = true;
+				if (inFileName)
+					free(inFileName);
+				inFileName = strdup(optarg);
 				break;
 			case 'd':
 				write_diagnose = true;
@@ -141,6 +153,12 @@ main(int argc, char *argv[])
 				break;
 			case 's':
 				stay = true;
+				break;
+			case 'i':
+				interactive = true;
+				break;
+			case 'b':
+				interactive = false;
 				break;
 			case '?':
 				break;
@@ -157,7 +175,14 @@ main(int argc, char *argv[])
 			errHandler(false, "Cannot open input file '%s', %s\n", inFileName, strerror(errno));
 	}
 	if (outFileName == NULL)
+	{
+		if (interactive)
+		{
+			fprintf(stderr, "Specify output file name when --interactive option is specified\n");
+			exit(1);
+		}
 		outF = stdout;
+	}
 	else
 	{
 		if (add_to_output)
@@ -167,6 +192,14 @@ main(int argc, char *argv[])
 		if (outF == NULL)
 			errHandler(false, "Cannot open output file '%s', %s\n", outFileName, strerror(errno));
 	}
+	if (interactive)
+	{
+		if (!isatty(fileno(stdin)) || !isatty(fileno(stdout)))
+		{
+			fprintf(stderr, "You cannot specify --interactive option when stdin/stdout is not a tty\n");
+			exit(1);
+		}
+	}
 	input_sequence = read_file(inF);
 	fclose(inF);
 	inF = NULL;
@@ -174,6 +207,9 @@ main(int argc, char *argv[])
 	/* Okay, every input parameter and sequence are good */
 
 	parseRemoteSequence(input_sequence, &topSequence);
+
+	if (topSequence == NULL)
+		errHandler(false, "No effective sequence definition was found.");
 
 	if (write_diagnose)
 		printRemoteSequence(topSequence, 0);
@@ -248,7 +284,13 @@ connectRemoteSequence(RemoteSequence *mySequence, RemoteSequence *parent)
 
 
 	/* Connect to the database for mySequence */
-	fprintf(outF, "Connecting to database '%s'\n", mySequence->dsn);
+	if (interactive)
+		printf("Connecting to database '%s', label: '%s'\n",
+				mySequence->dsn,
+				mySequence->label);
+	enterKey(NULL);
+	fprintf(outF, "Connecting to database '%s'\n",
+					mySequence->dsn);
 	if (parent && parent->conn == NULL)
 		errHandler(false, "Parent is not connected to the databae '%s'.", parent->dsn);
 	if (mySequence->conn)
@@ -256,14 +298,14 @@ connectRemoteSequence(RemoteSequence *mySequence, RemoteSequence *parent)
 	connectDatabase(mySequence);
 
 	/* BEGIN */
+
+	enterKey("Beginning a transaction and obtain transaction backend info ... type Enter key: ");
 	res = PQexec(mySequence->conn, BEGIN_STMT);
 	PQexecErrCheck(res, BEGIN_STMT, mySequence->dsn, false);
 	PQclear(res);
 
-	/* Get target database transaction status */
 	res = PQexec(mySequence->conn, SHOW_MYSELF_STMT);
 	PQexecErrCheck(res, SHOW_MYSELF_STMT, mySequence->dsn, false);
-
 
 	nn = 0;
 	mySequence->system_id = hex2int64(PQgetvalue(res, 0, nn++));
@@ -272,11 +314,19 @@ connectRemoteSequence(RemoteSequence *mySequence, RemoteSequence *parent)
 	mySequence->lxid = atoi(PQgetvalue(res, 0, nn++));
 	PQclear(res);
 
-	fprintf(outF, "Target database: %016lx, pid: %d, pgorocno: %d, lxid: %d\n",
+	fprintf(outF, "Target tansaction,  database: %016lx, pid: %d, pgorocno: %d, lxid: %d\n",
 			mySequence->system_id,
 			mySequence->pid,
 			mySequence->pgprocno,
 			mySequence->lxid);
+
+	if (interactive)
+		fprintf(outF, "Target transaction, database: %016lx, pid: %d, pgorocno: %d, lxid: %d\n",
+				mySequence->system_id,
+				mySequence->pid,
+				mySequence->pgprocno,
+				mySequence->lxid);
+	enterKey(NULL);
 
 	if (parent)
 		waitRemoteSequence(mySequence, parent);
@@ -312,9 +362,15 @@ waitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent)
 	/* Acquire external lock */
 	snprintf(cmd, CMDMAX, "select * from gdd_test_external_lock_acquire_myself('%s');", parent->label);
 
+	if (interactive)
+		printf("Acquiring external lock, label: '%s', dsn: '%s', query: '%s'\n",
+				parent->label,
+				parent->dsn,
+				cmd);
 	res = PQexec(parent->conn, cmd);
 	PQexecErrCheck(res, cmd, parent->dsn, false);
 	PQclear(res);
+	enterKey(NULL);
 
 	/* Setup lock property */
 	snprintf(cmd, CMDMAX, "select gdd_test_external_lock_set_properties_myself"
@@ -324,17 +380,33 @@ waitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent)
 						  remote->pgprocno,
 						  remote->pid,
 						  remote->lxid);
+	if (interactive)
+		printf("Set external lock properties, "
+				"label: '%s', remote dsn: '%s', remote pgprocno: %d, remote pid: %d, remote lxid: %d\n   query: '%s'\n",
+				parent->label,
+				remote->dsn,
+				remote->pgprocno,
+				remote->pid,
+				remote->lxid, cmd);
+	enterKey(NULL);
+
 	res = PQexec(parent->conn, cmd);
 	PQexecErrCheck(res, cmd, parent->dsn, false);
 	PQclear(res);
 
 	/* Wait external lock */
 	snprintf(cmd, CMDMAX, "select gdd_test_external_lock_wait_myself('%s');", parent->label);
+
+	if (interactive)
+		printf("Waiting external lock, label: '%s'\n", parent->label);
+
 	res = PQexec(parent->conn, cmd);
 	PQexecErrCheck(res, cmd, parent->dsn, false);
 	PQclear(res);
 
 	parent->has_external_lock = true;
+
+	enterKey("Now waiting ... type Enter key: ");
 }
 
 static void
@@ -343,60 +415,120 @@ unWaitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent)
 	char		 cmd[CMDMAX+1];
 	PGresult	*res;
 
-	snprintf(cmd, CMDMAX, "gdd_test_external_lock_unwait_pgprocno"
+	if (parent == NULL)
+		return;
+
+	snprintf(cmd, CMDMAX, "select * from gdd_test_external_lock_unwait_pgprocno"
 						  "('%s', %d);",
 						  parent->label,
 						  remote->pgprocno);
+	if (interactive)
+		printf("Unwait '%s', dsn '%s', query: '%s'\n", parent->label, parent->dsn, cmd);
 	res = PQexec(parent->conn, cmd);
 	PQexecErrCheck(res, cmd, parent->dsn, false);
 	PQclear(res);
 
 	parent->has_external_lock = false;
+	enterKey(NULL);
 }
 
-static void
+static bool
 runRemoteSequence(RemoteSequence *sequence, RemoteSequence *parent)
 {
 	int ii;
+	bool status = true;
 
+
+	if (interactive)
+		printf("Running remote sequence '%s', parent: '%s'\n", sequence->label, parent ? parent->label : "NULL");
+	enterKey(NULL);
 	connectRemoteSequence(sequence, parent);
 
 	for (ii = 0; ii < sequence->nSequenceElement; ii++)
 	{
 		if (sequence->sequenceCategory[ii] == STEP_REMOTE)
-			runRemoteSequence(sequence->sequenceStep[ii]->remote, sequence);
+		{
+			status = runRemoteSequence(sequence->sequenceStep[ii]->remote, sequence);
+			if (!status)
+			{
+				/* K.Suzuki: Error handling: interactive and outfile */
+				break;
+			}
+		}
 		else if (sequence->sequenceCategory[ii] == STEP_COMMAND)
-			runCommand(sequence, sequence->sequenceStep[ii]->command);
+		{
+			status = runCommand(sequence, sequence->sequenceStep[ii]->command);
+			if (!status)
+			{
+				/* K.Suzuki: Error handling: interactive and outfile */
+				break;
+			}
+		}
 		else
-			runQuery(sequence->conn, sequence->sequenceStep[ii]->query);
+		{
+			status = runQuery(sequence->conn, sequence->sequenceStep[ii]->query);
+			if (!status)
+			{
+				/* K.Suzuki: Error handling: interactive and outfile */
+				break;
+			}
+		}
 	}
 
-	/*
-	 * K.Suzuki: The following should not be mandatory.
-	 * May need to keep the connecton and the transaction open.
-	 */
-	unWaitRemoteSequence(sequence, parent);
+	if (status == true)
+	{
+		/*
+		 * Note that we should not release the lock explicitly.  It's 2PL violation
+		 *
+		 * We can reuse this lock in the same transaction.
+		 */
+		unWaitRemoteSequence(sequence, parent);
+		/* releaseExternalLock(parent); */
+	}
+	else
+	{
+		PGresult		*res;
+
+		/* Abort current transaction, disconnect and return */
+		if (sequence->conn)
+		{
+			res = PQexec(sequence->conn, "ABORT;");
+			PQclear(res);
+			PQfinish(sequence->conn);
+			sequence->conn = NULL;
+		}
+	}
+	if (interactive)
+		printf("Finished running remote sequence '%s'\n", sequence->label);
+	enterKey(NULL);
+
+	return status;
 }
 
-static void
+static bool
 runCommand(RemoteSequence *sequence, char *command)
 {
+	bool status = true;
+
+	if (interactive)
+		printf("Runinng command '%s' on the sequence '%s'\n", command, sequence->label);
 	if (strcmp(command, "return") == 0)
 	{
 		PQfinish(sequence->conn);
 		sequence->conn = NULL;
-		return;
 	}
 	else if (strcmp(command, "hold") == 0)
-		return;
+	{}
 	else
 	{
 		fprintf(stderr, "Invalid command found: '%s'\n", command);
-		return;
+		status = false;
 	}
+	enterKey(NULL);
+	return status;
 }
 
-static void
+static bool
 runQuery(PGconn *conn, char *query)
 {
 	/*
@@ -406,6 +538,8 @@ runQuery(PGconn *conn, char *query)
 	PGresult		*res;
 	ExecStatusType	 status;
 
+	if (interactive)
+		printf("Running query '%s'\n", query);
 	res = PQexec(conn, query);
 	if (res == NULL)
 		errHandler(false, "Serious error in executing '%s'", query);
@@ -414,14 +548,17 @@ runQuery(PGconn *conn, char *query)
 	{
 		fprintf(outF, "Query '%s' failed.  %s\n", query, PQresultErrorMessage(res));
 		PQclear(res);
-		res = PQexec(conn, "abort;");
-		PQclear(res);
-		return;
+		enterKey(NULL);
+		return false;
 	}
 	else
+	{
 		fprintf(outF, "Query '%s' done successfully.\n", query);
-	PQclear(res);
-	return;
+		enterKey(NULL);
+		PQclear(res);
+		return true;
+	}
+	return false;
 }
 
 static void
@@ -431,15 +568,30 @@ connectDatabase(RemoteSequence *remoteSequence)
 
 	if (remoteSequence->conn == NULL)
 	{
+		if (interactive)
+			printf("Connecting to the database '%s'\n", remoteSequence->dsn);
 		conn = PQconnectdb(remoteSequence->dsn);
 		if ((conn == NULL) || (PQstatus(conn) == CONNECTION_BAD))
 			errHandler(false, "Failed to connect to remote database '%s' not reachable.",
 					remoteSequence->dsn);
+		enterKey("Connection successful... type Enter key: ");
 	}
 	remoteSequence->conn = conn;
 	return;
 }
 
+static void
+enterKey(char *prompt)
+{
+	if (interactive)
+	{
+		if (prompt)
+			puts(prompt);
+		else
+			puts("Type Enter key: ");
+		fgets(inbuf, INBUFSZ, stdin);
+	}
+}
 static char *
 parseRemoteSequence(char *indata, RemoteSequence **sequence)
 {
