@@ -90,10 +90,10 @@ static void unWaitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent)
 static void waitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent);
 static bool PQexecErrCheck(PGresult *res, char *cmd, char *dsn, bool return_f);
 static void enterKey(char *prompt);
-static void releaseExternalLock(RemoteSequence *remote);
 /*
  * -f FILE, --input FILE: read sequence from the file.  '-' means stdin and it's the default..
- * -o FILE, --output FILE: write output to the file. '-' means stdout and it's the default.
+ * -o FILE, --output FILE: write the output to the file. '-' means stdout and it's the default.
+ * -a FILE, --add FILE: add the output to the file.
  * -d, --diagnose: write parsed sequence.
  * -t, --test: Read and parse the sequence.   Do not run it.
  * -s, --stay: Do not terminate the sequence and keep this as outstanding transaction.
@@ -109,20 +109,20 @@ main(int argc, char *argv[])
 
 	static struct option long_options[] = 
 	{
-		{"input",	required_argument,	0,	'f' },
-		{"output",	required_argument,	0,	'o' },
 		{"add",		required_argument,	0,	'a' },
-		{"diagnose",	no_argument,	0,	'd' },
-		{"test",	no_argument,		0,	't' },
-		{"stay",	no_argument,		0,	's' },
-		{"interactive", no_argument,	0,  'i' },
 		{"batch", no_argument,			0,  'b' },
+		{"diagnose",	no_argument,	0,	'd' },
+		{"input",	required_argument,	0,	'f' },
+		{"interactive", no_argument,	0,  'i' },
+		{"output",	required_argument,	0,	'o' },
+		{"stay",	no_argument,		0,	's' },
+		{"test",	no_argument,		0,	't' },
 		{0,			0,					0,	0   }
 	};
 
 	while(1)
 	{
-		c = getopt_long(argc, argv, "f:o:adtsib",
+		c = getopt_long(argc, argv, "f:o:a:dtsib",
 					    long_options, &option_index);
 		if (c == -1)
 			break;
@@ -167,31 +167,47 @@ main(int argc, char *argv[])
 		}
 	}
 	if (inFileName == NULL)
+	{
+		if (interactive)
+			errHandler(false, "With --interactive, you should provide scenario with -f option.");
+		if (!isatty(fileno(stdin)))
+			errHandler(false, "With --interactive, stdin must be a tty.");
 		inF = stdin;
+	}
 	else
 	{
-		inF = fopen(inFileName, "r");
-		if (inF == NULL)
+		if (strcmp(inFileName, "-") == 0)
+			inF = stdin;
+		else if ((inF = fopen(inFileName, "r")) == NULL)
 			errHandler(false, "Cannot open input file '%s', %s\n", inFileName, strerror(errno));
 	}
 	if (outFileName == NULL)
 	{
-		if (interactive)
-		{
-			fprintf(stderr, "Specify output file name when --interactive option is specified\n");
-			exit(1);
-		}
+		if (!isatty(fileno(stdout)))
+			errHandler(false, "With --interactive, stdout must be a tty.");
+		outF = stdout;
+	}
+	else if (strcmp(outFileName, "-") == 0)
+	{
+		if (add_to_output)
+			errHandler(false, "Cannot specify stdout as --a option value.");
 		outF = stdout;
 	}
 	else
 	{
+		if (interactive)
+			errHandler(false, "With --interactive option, output file must be stdout and it must be tty.");
 		if (add_to_output)
-			outF = fopen(inFileName, "a");
+			outF = fopen(outFileName, "a");
 		else
-			outF = fopen(inFileName, "w");
+			outF = fopen(outFileName, "w");
 		if (outF == NULL)
 			errHandler(false, "Cannot open output file '%s', %s\n", outFileName, strerror(errno));
 	}
+	/*
+	 * Please note that with --interactive option, input must be stdin and outpu must be stdout.
+	 * This has already been checked.
+	 */
 	if (interactive)
 	{
 		if (!isatty(fileno(stdin)) || !isatty(fileno(stdout)))
