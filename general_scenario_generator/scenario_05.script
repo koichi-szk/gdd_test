@@ -1,0 +1,19 @@
+# Example of general_scenario_generator script
+#
+# This needs more test.  As of Nov.10, current code does not
+# detect deadlock for this scenario.
+#
+connect 'ubuntu00_001' 'host=ubuntu00 dbname=koichi user=koichi'
+	'LOCK TABLE t1 IN ACCESS EXCLUSIVE MODE;'
+	connect 'ubuntu01_002' 'host=ubuntu02 dbname=koichi user=koichi'
+		'LOCK TABLE t1 IN ACCESS EXCLUSIVE MODE;'
+		connect	'ubuntu02_003' 'host=ubuntu00 dbname=koichi user=koichi'
+			connect 'ubuntu00_004' 'host=ubuntu01 dbname=koichi user=koichi'
+				'LOCK TABLE t2 IN ACCESS EXCLUSIVE MODE;'
+				connect 'ubuntu01_005' 'host=ubuntu00 dbname=koichi user=koichi'
+					'LOCK TABLE t1 IN ACCESS EXCLUSIVE MODE;'
+				finish
+			finish
+		finish
+	finish
+finish

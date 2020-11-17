@@ -1,6 +1,7 @@
 # Example of general_scenario_generator script
 #
 connect	'ubuntu00_001' 'host=ubuntu00 dbname=koichi user=koichi'
+	echo 'Echo test'
 	'LOCK TABLE t1 IN ACCESS EXCLUSIVE MODE;'
 	connect 'ubuntu01_001' 'host=ubuntu01 dbname=koichi user=koichi'
 		connect 'ubuntu00_002' 'host=ubuntu00 dbname=koichi user=koichi'

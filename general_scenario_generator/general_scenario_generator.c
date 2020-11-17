@@ -32,10 +32,17 @@ typedef enum StepCategory
 	STEP_REMOTE
 } StepCategory;
 
+typedef struct Command
+{
+	char	 *cmdname;
+	int		  nargs;
+	char	**args;
+} Command;
+
 typedef union SequenceStep
 {
 	char	*query;
-	char	*command;
+	Command	*command;
 	struct RemoteSequence *remote;
 } SequenceStep;
 
@@ -54,6 +61,18 @@ typedef struct RemoteSequence
 	SequenceStep	**sequenceStep;
 } RemoteSequence;
 
+typedef struct RemoteSequenceStack
+{
+	char	*label;
+	char	*hdr;
+} RemoteSequenceStack;
+
+RemoteSequenceStack	*seq_stack = NULL;
+int	seq_stack_allocated = 0;
+int	seq_stack_current = -1;
+
+#define HDR (seq_stack_current >= 0 ? seq_stack[seq_stack_current].hdr : "")
+
 int	auto_label = 0;
 
 char	*inFileName = NULL;
@@ -67,8 +86,6 @@ bool	 interactive = false;
 FILE	*outF;
 FILE	*inF;
 
-#define INBUFSZ 512
-char	inbuf[INBUFSZ];
 
 static void connectDatabase(RemoteSequence *remoteSequence);
 static void connectRemoteSequence(RemoteSequence *mySequence, RemoteSequence *parent);
@@ -81,15 +98,20 @@ static char *parseRemoteSequence(char *indata, RemoteSequence **sequence);
 static char *peekChar(char *indata, char *peeked);
 static char *read_file(FILE *f);
 static void printRemoteSequence(RemoteSequence *sequence, int level);
-static bool runCommand(RemoteSequence *sequence, char *command);
+static bool runCommand(RemoteSequence *sequence, Command *command);
 static bool runRemoteSequence(RemoteSequence *sequence, RemoteSequence *parent);
 static bool runQuery(PGconn *conn, char *query);
-static void setCommand(RemoteSequence *sequence, char *command);
+static void setCommand(RemoteSequence *sequence, char *cmdname, int nargs, char **args);
 static char *skip_sp(char *indata);
 static void unWaitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent);
 static void waitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent);
 static bool PQexecErrCheck(PGresult *res, char *cmd, char *dsn, bool return_f);
 static void enterKey(char *prompt);
+static void push_seq_stack(char *label);
+static void pop_seq_stack(void);
+static char *createRemoteSeqHdr(void);
+#define remoteSeqHdr()	seq_stack[seq_stack_current].hdr
+
 /*
  * -f FILE, --input FILE: read sequence from the file.  '-' means stdin and it's the default..
  * -o FILE, --output FILE: write the output to the file. '-' means stdout and it's the default.
@@ -300,13 +322,11 @@ connectRemoteSequence(RemoteSequence *mySequence, RemoteSequence *parent)
 
 
 	/* Connect to the database for mySequence */
-	if (interactive)
-		printf("Connecting to database '%s', label: '%s'\n",
+	fprintf(outF, "%sConnecting to database '%s', label: '%s'\n",
+				HDR,
 				mySequence->dsn,
 				mySequence->label);
 	enterKey(NULL);
-	fprintf(outF, "Connecting to database '%s'\n",
-					mySequence->dsn);
 	if (parent && parent->conn == NULL)
 		errHandler(false, "Parent is not connected to the databae '%s'.", parent->dsn);
 	if (mySequence->conn)
@@ -330,18 +350,12 @@ connectRemoteSequence(RemoteSequence *mySequence, RemoteSequence *parent)
 	mySequence->lxid = atoi(PQgetvalue(res, 0, nn++));
 	PQclear(res);
 
-	fprintf(outF, "Target tansaction,  database: %016lx, pid: %d, pgorocno: %d, lxid: %d\n",
+	fprintf(outF, "%sTarget tansaction,  database: %016lx, pid: %d, pgorocno: %d, lxid: %d\n",
+			HDR,
 			mySequence->system_id,
 			mySequence->pid,
 			mySequence->pgprocno,
 			mySequence->lxid);
-
-	if (interactive)
-		fprintf(outF, "Target transaction, database: %016lx, pid: %d, pgorocno: %d, lxid: %d\n",
-				mySequence->system_id,
-				mySequence->pid,
-				mySequence->pgprocno,
-				mySequence->lxid);
 	enterKey(NULL);
 
 	if (parent)
@@ -378,15 +392,16 @@ waitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent)
 	/* Acquire external lock */
 	snprintf(cmd, CMDMAX, "select * from gdd_test_external_lock_acquire_myself('%s');", parent->label);
 
-	if (interactive)
-		printf("Acquiring external lock, label: '%s', dsn: '%s', query: '%s'\n",
+	fprintf(outF, "%sAcquiring external lock, label: '%s', dsn: '%s', query: '%s'\n",
+				HDR,
 				parent->label,
 				parent->dsn,
 				cmd);
+	enterKey(NULL);
 	res = PQexec(parent->conn, cmd);
 	PQexecErrCheck(res, cmd, parent->dsn, false);
 	PQclear(res);
-	enterKey(NULL);
+	enterKey("External lock acquisition successful. Type Enter key: ");
 
 	/* Setup lock property */
 	snprintf(cmd, CMDMAX, "select gdd_test_external_lock_set_properties_myself"
@@ -396,9 +411,9 @@ waitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent)
 						  remote->pgprocno,
 						  remote->pid,
 						  remote->lxid);
-	if (interactive)
-		printf("Set external lock properties, "
+	fprintf(outF, "%sSet external lock properties, "
 				"label: '%s', remote dsn: '%s', remote pgprocno: %d, remote pid: %d, remote lxid: %d\n   query: '%s'\n",
+				HDR,
 				parent->label,
 				remote->dsn,
 				remote->pgprocno,
@@ -413,8 +428,8 @@ waitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent)
 	/* Wait external lock */
 	snprintf(cmd, CMDMAX, "select gdd_test_external_lock_wait_myself('%s');", parent->label);
 
-	if (interactive)
-		printf("Waiting external lock, label: '%s'\n", parent->label);
+	fprintf(outF, "%sWaiting external lock, label: '%s'\n", HDR, parent->label);
+	enterKey(NULL);
 
 	res = PQexec(parent->conn, cmd);
 	PQexecErrCheck(res, cmd, parent->dsn, false);
@@ -438,8 +453,8 @@ unWaitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent)
 						  "('%s', %d);",
 						  parent->label,
 						  remote->pgprocno);
-	if (interactive)
-		printf("Unwait '%s', dsn '%s', query: '%s'\n", parent->label, parent->dsn, cmd);
+	fprintf(outF, "%sUnwait '%s', dsn '%s', query: '%s'\n", HDR, parent->label, parent->dsn, cmd);
+	enterKey(NULL);
 	res = PQexec(parent->conn, cmd);
 	PQexecErrCheck(res, cmd, parent->dsn, false);
 	PQclear(res);
@@ -455,8 +470,8 @@ runRemoteSequence(RemoteSequence *sequence, RemoteSequence *parent)
 	bool status = true;
 
 
-	if (interactive)
-		printf("Running remote sequence '%s', parent: '%s'\n", sequence->label, parent ? parent->label : "NULL");
+	fprintf(outF, "%sRunning remote sequence '%s', parent: '%s'\n", HDR, sequence->label, parent ? parent->label : "NULL");
+	push_seq_stack(sequence->label);
 	enterKey(NULL);
 	connectRemoteSequence(sequence, parent);
 
@@ -514,33 +529,42 @@ runRemoteSequence(RemoteSequence *sequence, RemoteSequence *parent)
 			sequence->conn = NULL;
 		}
 	}
-	if (interactive)
-		printf("Finished running remote sequence '%s'\n", sequence->label);
+	fprintf(outF, "%sFinished running remote sequence '%s'\n", HDR, sequence->label);
 	enterKey(NULL);
+
+	pop_seq_stack();
 
 	return status;
 }
 
 static bool
-runCommand(RemoteSequence *sequence, char *command)
+runCommand(RemoteSequence *sequence, Command *command)
 {
 	bool status = true;
 
-	if (interactive)
-		printf("Runinng command '%s' on the sequence '%s'\n", command, sequence->label);
-	if (strcmp(command, "return") == 0)
+	if (strcmp(command->cmdname, "return") == 0)
 	{
+		fprintf(outF, "%sRuninng command '%s' on the sequence '%s'\n", HDR, command->cmdname, sequence->label);
+		enterKey(NULL);
 		PQfinish(sequence->conn);
 		sequence->conn = NULL;
 	}
-	else if (strcmp(command, "hold") == 0)
-	{}
+	else if (strcmp(command->cmdname, "hold") == 0)
+	{
+		fprintf(outF, "%sRuninng command '%s' on the sequence '%s'\n", HDR, command->cmdname, sequence->label);
+		enterKey(NULL);
+	}
+	else if (strcmp(command->cmdname, "echo") == 0)
+	{
+		fprintf(outF, "%s%s%s", HDR, command->args[0], interactive ? "" : "\n");
+		enterKey(" *** Type Enter key to proceed: ");
+	}
 	else
 	{
-		fprintf(stderr, "Invalid command found: '%s'\n", command);
+		fprintf(stderr, "Invalid command found: '%s'\n", command->cmdname);
+		enterKey(NULL);
 		status = false;
 	}
-	enterKey(NULL);
 	return status;
 }
 
@@ -554,22 +578,22 @@ runQuery(PGconn *conn, char *query)
 	PGresult		*res;
 	ExecStatusType	 status;
 
-	if (interactive)
-		printf("Running query '%s'\n", query);
+	fprintf(outF, "%sRunning query '%s'\n", HDR, query);
+	enterKey(NULL);
 	res = PQexec(conn, query);
 	if (res == NULL)
 		errHandler(false, "Serious error in executing '%s'", query);
 	status = PQresultStatus(res);
 	if ((status != PGRES_COMMAND_OK) && (status != PGRES_TUPLES_OK))
 	{
-		fprintf(outF, "Query '%s' failed.  %s\n", query, PQresultErrorMessage(res));
+		fprintf(outF, "%sQuery '%s' failed.  %s\n", HDR, query, PQresultErrorMessage(res));
 		PQclear(res);
 		enterKey(NULL);
 		return false;
 	}
 	else
 	{
-		fprintf(outF, "Query '%s' done successfully.\n", query);
+		fprintf(outF, "%sQuery '%s' done successfully.\n", HDR, query);
 		enterKey(NULL);
 		PQclear(res);
 		return true;
@@ -584,8 +608,7 @@ connectDatabase(RemoteSequence *remoteSequence)
 
 	if (remoteSequence->conn == NULL)
 	{
-		if (interactive)
-			printf("Connecting to the database '%s'\n", remoteSequence->dsn);
+		fprintf(outF, "%sConnecting to the database '%s'\n", HDR, remoteSequence->dsn);
 		conn = PQconnectdb(remoteSequence->dsn);
 		if ((conn == NULL) || (PQstatus(conn) == CONNECTION_BAD))
 			errHandler(false, "Failed to connect to remote database '%s' not reachable.",
@@ -596,18 +619,23 @@ connectDatabase(RemoteSequence *remoteSequence)
 	return;
 }
 
+#define INBUFSZ 512
 static void
 enterKey(char *prompt)
 {
+	char	inbuf[INBUFSZ];
+
 	if (interactive)
 	{
 		if (prompt)
-			puts(prompt);
+			printf("%s", prompt);
 		else
-			puts("Type Enter key: ");
+			printf("%s", "Type Enter key: ");
 		fgets(inbuf, INBUFSZ, stdin);
 	}
 }
+#undef INBUFSZ
+
 static char *
 parseRemoteSequence(char *indata, RemoteSequence **sequence)
 {
@@ -660,6 +688,8 @@ parseRemoteSequence(char *indata, RemoteSequence **sequence)
 		if (indata == NULL)
 			return NULL;
 		indata = peekChar(indata, &firstchar);
+		if (indata == NULL)
+			return NULL;
 		if (firstchar == '\'')
 		{
 			char	*query;
@@ -695,14 +725,27 @@ parseRemoteSequence(char *indata, RemoteSequence **sequence)
 			/* K.Suzuki: Add parse of commands */
 			else if ((strcmp(word, "return") == 0) || (strcmp(word, "finish") == 0))
 			{
-				setCommand(mySequence, "return");
+				setCommand(mySequence, "return", 0, NULL);
 				return indata;
 			}
 			else if (strcmp(word, "hold") == 0)
 			{
 				/* K.Suzuki: Add parse for "hold" command */
-				setCommand(mySequence, "hold");
+				setCommand(mySequence, "hold", 0, NULL);
 				return indata;
+			}
+			else if (strcmp(word, "echo") == 0)
+			{
+				char *arg;
+				char **args;
+
+				indata = getString(indata, &arg);
+				if (indata == NULL)
+					return NULL;
+				args = (char **)malloc(sizeof(char *));
+				args[0] = strdup(arg);
+				setCommand(mySequence, "echo", 1, args);
+				continue;
 			}
 			else
 				errHandler(false, "Input syntax error.");
@@ -714,7 +757,7 @@ parseRemoteSequence(char *indata, RemoteSequence **sequence)
 
 
 static void
-setCommand(RemoteSequence *sequence, char *command)
+setCommand(RemoteSequence *sequence, char *cmdname, int nargs, char **args)
 {
 	int	nn;
 
@@ -722,7 +765,10 @@ setCommand(RemoteSequence *sequence, char *command)
 	expandRemoteSequence(sequence);
 	sequence->sequenceCategory[nn] = STEP_COMMAND;
 	sequence->sequenceStep[nn] = (SequenceStep *)malloc(sizeof(SequenceStep));
-	sequence->sequenceStep[nn]->command = strdup(command);
+	sequence->sequenceStep[nn]->command = (Command *)malloc(sizeof(Command));
+	sequence->sequenceStep[nn]->command->cmdname = strdup(cmdname);
+	sequence->sequenceStep[nn]->command->nargs = nargs;
+	sequence->sequenceStep[nn]->command->args = args;
 }
 
 /*
@@ -733,9 +779,9 @@ expandRemoteSequence(RemoteSequence *remoteSequence)
 {
 	remoteSequence->nSequenceElement++;
 	remoteSequence->sequenceCategory = (StepCategory *)my_realloc(remoteSequence->sequenceCategory,
-												   sizeof(StepCategory) * remoteSequence->nSequenceElement);
+												sizeof(StepCategory) * remoteSequence->nSequenceElement);
 	remoteSequence->sequenceStep = (SequenceStep **)my_realloc(remoteSequence->sequenceStep,
-																 sizeof(SequenceStep *) * remoteSequence->nSequenceElement);
+												sizeof(SequenceStep *) * remoteSequence->nSequenceElement);
 }
 
 static char *
@@ -934,7 +980,7 @@ my_realloc(void *ptr, size_t size)
 static void
 printRemoteSequence(RemoteSequence *sequence, int level)
 {
-	int		ii;
+	int		ii, jj;
 	int		lHeading = level * 4;
 	char   *heading;
 
@@ -954,7 +1000,16 @@ printRemoteSequence(RemoteSequence *sequence, int level)
 				fprintf(outF, "%s    Query: '%s'\n", heading, seq_step->query);
 				break;
 			case STEP_COMMAND:
-				fprintf(outF, "%s    Command: '%s'\n", heading, seq_step->command);
+				fprintf(outF, "%s    Command: '%s': ", heading, seq_step->command->cmdname);
+				if (seq_step->command->nargs == 0)
+					fprintf(outF,  "No arguments.\n");
+				else
+				{
+					fprintf(outF, "%d arguments", seq_step->command->nargs);
+					for (jj = 0; jj < seq_step->command->nargs; jj++)
+						fprintf(outF, "\n%s    args: %d, value: '%s'", heading, jj, seq_step->command->args[jj]);
+				}
+				fputc('\n', outF);
 				break;
 			case STEP_REMOTE:
 				printRemoteSequence(seq_step->remote, level + 1);
@@ -965,4 +1020,47 @@ printRemoteSequence(RemoteSequence *sequence, int level)
 		}
 	}
 }
+
+static void
+push_seq_stack(char *label)
+{
+	seq_stack_current++;
+	if (seq_stack_allocated <= seq_stack_current)
+	{
+		seq_stack_allocated++;
+		seq_stack = (RemoteSequenceStack *)my_realloc(seq_stack, sizeof(RemoteSequenceStack) * seq_stack_allocated);
+	}
+	seq_stack[seq_stack_current].label = label;
+	seq_stack[seq_stack_current].hdr = createRemoteSeqHdr();
+}
+
+static void
+pop_seq_stack(void)
+{
+	free(seq_stack[seq_stack_current].hdr);
+	seq_stack[seq_stack_current].label = NULL;
+	seq_stack[seq_stack_current].hdr = NULL;
+	seq_stack_current--;
+}
+
+#define	HDRLEN	128
+
+static char *
+createRemoteSeqHdr(void)
+{
+	int ii;
+	char	remoteSeqHdrData[HDRLEN + 1];
+	char	hdrdata[HDRLEN];
+
+	for (ii = 0; ii < seq_stack_current * 2; ii++)
+	{
+		hdrdata[ii] = '=';
+	}
+	hdrdata[ii++] = '>';
+	hdrdata[ii++] = ' ';
+	hdrdata[ii] = 0;
+	snprintf(remoteSeqHdrData, HDRLEN, "%s %s: ", hdrdata, seq_stack[seq_stack_current].label);
+	return strdup(remoteSeqHdrData);
+}
+#undef HDRLEN
 
