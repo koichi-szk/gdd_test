@@ -2,7 +2,7 @@
 #
 connect	'ubuntu00_001' 'host=ubuntu00 dbname=koichi user=koichi'
 	echo 'Echo test'
-	'LOCK TABLE t1 IN ACCESS EXCLUSIVE MODE;'
+	'LOCK TABLE t1 IN ACCESS SHARE MODE;'
 	connect 'ubuntu01_001' 'host=ubuntu01 dbname=koichi user=koichi'
 		connect 'ubuntu00_002' 'host=ubuntu00 dbname=koichi user=koichi'
 			'LOCK TABLE t1 IN ACCESS EXCLUSIVE MODE;'

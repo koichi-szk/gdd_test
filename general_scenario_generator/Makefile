@@ -25,6 +25,8 @@ SUBMAKE_LIBPQ := submake-libpq
 endif
 
 OBJS=	general_scenario_generator.o $(WIN32RES)
+OBJS2=	bg_workload.o $(WIN32RES)
+
 
 # Add PG library path and libpq for link option.
 LDFLAGS_EX := $(LDFLAGS_EX) -L $(shell pg_config --libdir) -lpq
@@ -32,10 +34,13 @@ LDFLAGS_EX := $(LDFLAGS_EX) -L $(shell pg_config --libdir) -lpq
 # Add include directory and disable optimization for gdb use even in production
 CFLAGS := $(CFLAGS) -O0 -g3 -I $(shell pg_config --includedir)
 
-all: general_scenario_generator
+all: general_scenario_generator bg_workload
 
 general_scenario_generator: $(OBJS) | submake-libpgport $(SUBMAKE_LIBPQ)
 	$(CC) $(CFLAGS) $(OBJS) $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
+
+bg_workload: $(OBJS2) | submake-libpgport $(SUBMAKE_LIBPQ)
+	$(CC) $(CFLAGS) $(OBJS2) $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
 
 install: all installdirs
 	$(INSTALL_PROGRAM) general_scenario_generator$(X) '$(DESTDIR)$(bindir)/general_scenario_generator$(X)'
