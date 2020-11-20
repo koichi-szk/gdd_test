@@ -24,7 +24,7 @@ LDFLAGS_INTERNAL += $(libpq_pgport)
 SUBMAKE_LIBPQ := submake-libpq
 endif
 
-OBJS=	general_scenario_generator.o $(WIN32RES)
+OBJS1=	general_scenario_generator.o $(WIN32RES)
 OBJS2=	bg_workload.o $(WIN32RES)
 
 
@@ -36,23 +36,26 @@ CFLAGS := $(CFLAGS) -O0 -g3 -I $(shell pg_config --includedir)
 
 all: general_scenario_generator bg_workload
 
-general_scenario_generator: $(OBJS) | submake-libpgport $(SUBMAKE_LIBPQ)
-	$(CC) $(CFLAGS) $(OBJS) $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
+general_scenario_generator: $(OBJS1) | submake-libpgport $(SUBMAKE_LIBPQ)
+	$(CC) $(CFLAGS) $(OBJS1) $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
 
 bg_workload: $(OBJS2) | submake-libpgport $(SUBMAKE_LIBPQ)
 	$(CC) $(CFLAGS) $(OBJS2) $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
 
 install: all installdirs
 	$(INSTALL_PROGRAM) general_scenario_generator$(X) '$(DESTDIR)$(bindir)/general_scenario_generator$(X)'
+	$(INSTALL_PROGRAM) bg_workload$(X) '$(DESTDIR)$(bindir)/bg_workload$(X)'
 
 installdirs:
 	$(MKDIR_P) '$(DESTDIR)$(bindir)'
 
 uninstall:
 	rm -f '$(DESTDIR)$(bindir)/general_scenario_generator$(X)'
+	rm -f '$(DESTDIR)$(bindir)/bg_workload$(X)'
 
 clean distclean maintainer-clean:
-	rm -f general_scenario_generator$(X) $(OBJS)
+	rm -f general_scenario_generator$(X) $(OBJS1)
+	rm -f bg_workload$(X) $(OBJS2)
 	rm -rf tmp_check
 
 check:

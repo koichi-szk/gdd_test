@@ -1,12 +1,14 @@
+#include	<errno.h>
+#include	<getopt.h>
+#include	<signal.h>
+#include	<stdarg.h>
 #include	<stdio.h>
-#include	<unistd.h>
 #include	<stdlib.h>
 #include	<string.h>
-#include	<error.h>
-#include	<getopt.h>
 #include	<sys/time.h>
 #include	<sys/types.h>
-#include	<signal.h>
+#include	<sys/wait.h>
+#include	<unistd.h>
 
 #include	"libpq-fe.h"
 
@@ -14,6 +16,7 @@ char	*def_hosts[] = {"ubuntu00", "ubuntu01", "ubuntu02", "ubuntu03", "ubuntu04",
 #define DEF_NHOSTS 5
 #define	CONN_PER_HOST	8
 #define TXN_PER_CONN	16
+#define	DEF_INTVL		1000		/* in millisecond */
 
 #define	SQL_STMT "LOCK TABLE t1 IN ACCESS SHARE MODE;"
 
@@ -28,11 +31,15 @@ char	**hosts = NULL;
 int		  n_hosts = 0;
 int		  conn_per_host = 0;
 int		  txn_per_conn = 0;
-int		  interval = 0;
+int		  interval = -1;
 char	 *dbname = NULL;
 char	 *dbuser = NULL;
 char	 *query = NULL;
+bool	  verbose = false;
 bool	  debug = false;
+bool	  interactive = false;
+FILE	 *logF = NULL;
+char	 *logFname = NULL;
 
 pid_t	 *backend_pid = NULL;
 
@@ -45,18 +52,25 @@ static struct option long_options[] =
 	{"txn",		required_argument,	0,	't'	},
 	{"dbname",	required_argument,	0,	'd'	},
 	{"user",	required_argument,	0,	'u'	},
-	{"interval",required_argument,	0,	'i'	},
+	{"interval",required_argument,	0,	'i'	},	/* Interval in millisecond */
 	{"query",	required_argument,	0,	'q'	},
+	{"verbose",	no_argument,		0,	'v'	},
 	{"debug",	no_argument,		0,	'D'	},
+	{"log",		required_argument,	0,	'l'	},
 	{0,			0,					0,	0	}
 };
 
 static void sighandler(int signal);
-static void start_workload(int host_idx);
+static void start_workload(int host_idx, int idx_in_host);
 static void init_rand(void);
 static void wait_random(void);
 static void add_host(char	*host);
 static void *my_realloc(void *ptr, size_t size);
+static bool PQexecErrCheck(PGresult *res, char *cmd, char *host, int idx_in_host, bool flush_f);
+static void enterKey(char *prompt);
+static void print(bool logWrite, char *format, ...) __attribute__((format(printf, 2, 3)));
+static void flush(void);
+#define BOOL(b) ((b) ? "true" : "false")
 
 int
 main(int argc, char *argv[])
@@ -67,7 +81,7 @@ main(int argc, char *argv[])
 
 	while(1)
 	{
-		c = getopt_long(argc, argv, "h:c:t:d:u:D",
+		c = getopt_long(argc, argv, "l:i:h:c:t:d:u:Dv",
 						long_options, &option_index);
 		if (c == -1)
 			break;
@@ -89,7 +103,7 @@ main(int argc, char *argv[])
 				dbuser = strdup(optarg);
 				break;
 			case 'i':
-				interval = atoi(optarg);
+				interval = atoi(optarg);		/* millisecond */
 				break;
 			case 'q':
 				query = strdup(optarg);
@@ -97,10 +111,32 @@ main(int argc, char *argv[])
 			case 'D':
 				debug = true;
 				break;
+			case 'l':
+				if (strcmp(optarg, "-") == 0)
+				{
+					logF = stdout;
+					logFname = NULL;
+				}
+				else
+				{
+					logF = fopen(optarg, "w");
+					if (logF == NULL)
+					{
+						printf("Cannot open log file, %s\n", strerror(errno));
+						logF = stdout;
+						logFname = NULL;
+					}
+					else
+						logFname = strdup(optarg);
+				}
+				break;
+			case 'v':
+				verbose = true;
+				break;
 			case '?':
 				break;
 			default:
-				fprintf(stderr, "?? invalid character code from getopt %o ??\n", c);
+				printf("?? invalid character code from getopt %o ??\n", c);
 		}
 	}
 	if (hosts == NULL)
@@ -118,25 +154,45 @@ main(int argc, char *argv[])
 		dbuser = strdup(DBUSER);
 	if (query == NULL)
 		query = strdup(SQL_STMT);
+	if (interval < 0)
+		interval = DEF_INTVL;
+	if (isatty(fileno(stdin)) && isatty(fileno(stdout)))
+		interactive = true;
+	if (logF == NULL)
+		logF = stdout;
 	backend_pid = (pid_t *)malloc(sizeof(pid_t) * conn_per_host * n_hosts);
 
-	printf("**** Backend workload generator for general global deadlock scenario test ****\n");
-	printf("HOSTS: ");
+	print(true, "**** Backend workload generator for general global deadlock scenario test ****\n");
+	print(true, "HOSTS: ");
 	for (ii = 0; ii < n_hosts; ii++)
-		printf("%s ", hosts[ii]);
-	printf("\nCONN per host: %d, TXN per CONN: %d.\n", conn_per_host, txn_per_conn);
-	printf("QUERY: %s.\n", query);
+	{
+		print(true, "%s ", hosts[ii]);
+	}
+	print(true,
+		  "\nCONN per host: %d, TXN per CONN: %d, optional wait millisec: %d.\n",
+		  conn_per_host, txn_per_conn, interval);
+	print(true, "Verbosity: %s, logF: %s, debug: %s\n", BOOL(verbose), logFname ? logFname : "stdout", BOOL(debug));
+	print(true, "QUERY: %s.\n", query);
+
+	enterKey("Type Enter key to proceed: ");
 
 	kk = -1;
 	if (!debug)
 	{
 		for (ii = 0; ii < n_hosts; ii++)
 		{
-			for (jj = 0; jj < conn_per_host; ii++)
+			for (jj = 0; jj < conn_per_host; jj++)
 			{
+				flush();
 				kk++;
 				if ((my_pid = fork()) == 0)
-					start_workload(ii);
+				{
+					start_workload(ii, jj);
+					/* The function should not return unless there's an error */
+					print(true, "Workload generator process returned unexpectedly.  Host: %s\n", hosts[ii]);
+					flush();
+					exit(1);
+				}
 				else
 					backend_pid[kk] = my_pid;
 			}
@@ -145,11 +201,11 @@ main(int argc, char *argv[])
 	else
 	{
 		printf("Debug mode.   Start workload for the host %s\n", hosts[0]);
-		start_workload(0);
+		start_workload(0, 0);
 	}
-	printf("Now all the processes started.   Just waiting.   Type CTRL-C to stop the workload.\n");
 	signal(SIGQUIT, &sighandler);
 	signal(SIGINT, &sighandler);
+	printf("Now all the processes started.   Just waiting.   Type CTRL-C to stop the workload.\n");
 	while(1)
 	{
 		sleep(1);
@@ -158,50 +214,141 @@ main(int argc, char *argv[])
 	}
 }
 
+#define MSGLEN	4096
+static void
+print(bool logWrite, char *format, ...)
+{
+	va_list	ap;
+	char	msg[MSGLEN+1];
+
+	va_start(ap, format);
+	vsnprintf(msg, MSGLEN, format, ap);
+	va_end(ap);
+	printf("%s", msg);
+	if ((logF != stdout) && logWrite)
+		fprintf(logF, "%s", msg);
+}
+#undef MSGLEN
+
+static void
+flush(void)
+{
+	fflush(stdout);
+	if (logF != stdout)
+		fflush(logF);
+}
+
+#define INBUFSZ 512
+static void
+enterKey(char *prompt)
+{
+	char	inbuf[INBUFSZ];
+
+	if (interactive)
+	{
+		if (prompt)
+			printf("%s", prompt);
+		else
+			printf("%s", "Type Enter key: ");
+		fgets(inbuf, INBUFSZ, stdin);
+	}
+}
+#undef INBUFSZ
+
 static void
 sighandler(int signal)
 {
 	int ii;
+	int	wstatus;
 
-	printf("\nInterrupt received.  Stopping.\n");
+	print(true, "\nInterrupt received.  Terminating worker processes .......\n");
 	for(ii = 0; ii < (n_hosts * conn_per_host); ii++)
 		kill(backend_pid[ii], SIGQUIT);
+	for(ii = 0; ii < (n_hosts * conn_per_host); ii++)
+		waitpid(backend_pid[ii], &wstatus, 0);
+	print(true, "Worker processes terminated.  Exiting.\n");
 	exit(0);
 }
 
 #define LDSN	1024
 static void
-start_workload(int host_idx)
+start_workload(int host_idx, int idx_in_host)
 {
 	PGconn		*conn;
 	PGresult	*res;
 	char		 dsn[LDSN];
 	int			 ii;
+	char		*host;
 
+	host = hosts[host_idx];
 	init_rand();
-	snprintf(dsn, LDSN, "host=%s dbname=%s user=%s", hosts[host_idx], dbname, dbuser);
+	snprintf(dsn, LDSN, "host=%s dbname=%s user=%s", host, dbname, dbuser);
 	while (1)
 	{
 		conn = PQconnectdb(dsn);
 		if ((conn == NULL) || (PQstatus(conn) == CONNECTION_BAD))
-			fprintf(stderr, "Failed to connect to remote database '%s' not reachable.", dsn);
+		{
+			print(true, "Failed to connect to remote database %s not reachable. dsn: '%s'", host, dsn);
+			return;
+		}
+		if (verbose)
+		{
+			fprintf(logF, "Connected to the database %s, dsn: '%s', idx: %d\n", host, dsn, idx_in_host);
+			fflush(logF);
+		}
 
 		for (ii = 0; ii < txn_per_conn; ii++)
 		{
 			res = PQexec(conn, "BEGIN;");
+			PQexecErrCheck(res, "BEGIN;", host, idx_in_host, false);
 			PQclear(res);
 			res = PQexec(conn, query);
+			PQexecErrCheck(res, query, host, idx_in_host, false);
 			PQclear(res);
 			res = PQexec(conn, "ABORT;");
+			PQexecErrCheck(res, "ABORT;", host, idx_in_host, true);
 			PQclear(res);
 
 			wait_random();
 		}
 
 		PQfinish(conn);
+		if (verbose)
+		{
+			fprintf(logF, "Disconnected from the database %s, dsn: '%s', idx: %d\n", host, dsn, idx_in_host);
+			fflush(logF);
+		}
 	}
 }
 #undef LDSN
+
+static bool
+PQexecErrCheck(PGresult *res, char *cmd, char *host, int idx_in_host, bool flush_f)
+{
+	ExecStatusType	status;
+
+	if (res == NULL)
+	{
+		print(true, "Serious error occurred in execute '%s' for host %s, idx %d.", cmd, host, idx_in_host);
+		flush();
+		return false;
+	}
+	status = PQresultStatus(res);
+	if ((status != PGRES_COMMAND_OK) && (status != PGRES_TUPLES_OK))
+	{
+		print(true, "Query execution error: '%s', at host %s, idx: %d, %s.",
+				cmd, host, idx_in_host, PQresultErrorMessage(res));
+		flush();
+		return false;
+	}
+	else if (verbose)
+	{
+		fprintf(logF, "Query executed.  host: %s, idx: %d, query: '%s'\n", host, idx_in_host, cmd);
+		if (flush_f)
+			fflush(logF);
+	}
+	return true;
+}
 
 static void
 init_rand(void)
@@ -219,7 +366,7 @@ wait_random(void)
 
 	if (interval == 0)
 		return;
-	wait_usec = (int)((((double)rand()) * ((double)interval)) / (double)RAND_MAX);
+	wait_usec = (int)((((double)rand()) * ((double)interval) * 1000.0) / (double)RAND_MAX);	/* Microsecond */
 	usleep((useconds_t)wait_usec);
 }
 
@@ -242,7 +389,7 @@ my_realloc(void *ptr, size_t size)
 		rv = realloc(ptr, size);
 	if (rv == NULL)
 	{
-		fprintf(stderr, "Out of memory.\n");
+		printf("\n**** Out of memory. Exiting. ****\n\n");
 		exit(1);
 	}
 	return rv;
