@@ -1,5 +1,6 @@
 listen_addresses = '*'		# what IP address(es) to listen on;
 logging_collector = on		# Enable capturing of stderr and csvlog
+shared_buffers = 32MB			# min 128kB
 
 # For pglogical3 to work
 
@@ -12,3 +13,5 @@ max_wal_senders = 10
 track_commit_timestamp = on
 
 log_min_messages=DEBUG1
+
+huge_pages = off			# on, off, or try

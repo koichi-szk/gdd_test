@@ -81,7 +81,7 @@ main(int argc, char *argv[])
 
 	while(1)
 	{
-		c = getopt_long(argc, argv, "l:i:h:c:t:d:u:Dv",
+		c = getopt_long(argc, argv, "q:l:i:h:c:t:d:u:Dv",
 						long_options, &option_index);
 		if (c == -1)
 			break;
@@ -146,7 +146,7 @@ main(int argc, char *argv[])
 	}
 	if (conn_per_host == 0)
 		conn_per_host = CONN_PER_HOST;
-	if (txn_per_conn == 0)
+	if (txn_per_conn < 0)
 		txn_per_conn = TXN_PER_CONN;
 	if (dbname == NULL)
 		dbname = strdup(DBNAME);
@@ -225,8 +225,12 @@ print(bool logWrite, char *format, ...)
 	vsnprintf(msg, MSGLEN, format, ap);
 	va_end(ap);
 	printf("%s", msg);
+	fflush(stdout);
 	if ((logF != stdout) && logWrite)
+	{
 		fprintf(logF, "%s", msg);
+		fflush(logF);
+	}
 }
 #undef MSGLEN
 
@@ -270,7 +274,9 @@ sighandler(int signal)
 	exit(0);
 }
 
+#define PQERRCHECK(r, q, h, i, f) do{PQexecErrCheck(r,q,h,i,f); if((r)==NULL)return;}while(0)
 #define LDSN	1024
+#define PG_BACKEND_PID	"select * from pg_backend_pid();"
 static void
 start_workload(int host_idx, int idx_in_host)
 {
@@ -279,6 +285,7 @@ start_workload(int host_idx, int idx_in_host)
 	char		 dsn[LDSN];
 	int			 ii;
 	char		*host;
+	int			 backend_pid;
 
 	host = hosts[host_idx];
 	init_rand();
@@ -296,19 +303,29 @@ start_workload(int host_idx, int idx_in_host)
 			fprintf(logF, "Connected to the database %s, dsn: '%s', idx: %d\n", host, dsn, idx_in_host);
 			fflush(logF);
 		}
+		res = PQexec(conn, PG_BACKEND_PID);
+		PQERRCHECK(res, PG_BACKEND_PID, host, idx_in_host, false);
+		backend_pid = atoi(PQgetvalue(res, 0, 0));
+		PQclear(res);
+		print(true, "Host: %s, idx_in_host: %d, Backend PID: %d\n", host, idx_in_host, backend_pid);
 
-		for (ii = 0; ii < txn_per_conn; ii++)
+		for (ii = 0; (txn_per_conn == 0) || (ii < txn_per_conn); ii++)
 		{
 			res = PQexec(conn, "BEGIN;");
-			PQexecErrCheck(res, "BEGIN;", host, idx_in_host, false);
+			PQERRCHECK(res, "BEGIN;", host, idx_in_host, false);
 			PQclear(res);
 			res = PQexec(conn, query);
-			PQexecErrCheck(res, query, host, idx_in_host, false);
-			PQclear(res);
-			res = PQexec(conn, "ABORT;");
-			PQexecErrCheck(res, "ABORT;", host, idx_in_host, true);
+			PQERRCHECK(res, query, host, idx_in_host, false);
 			PQclear(res);
 
+			wait_random();
+
+			res = PQexec(conn, "ABORT;");
+			PQERRCHECK(res, "ABORT;", host, idx_in_host, true);
+			PQclear(res);
+
+			if (txn_per_conn == 0)
+				ii = 0;
 			wait_random();
 		}
 
@@ -329,7 +346,7 @@ PQexecErrCheck(PGresult *res, char *cmd, char *host, int idx_in_host, bool flush
 
 	if (res == NULL)
 	{
-		print(true, "Serious error occurred in execute '%s' for host %s, idx %d.", cmd, host, idx_in_host);
+		print(true, "Serious error occurred in execute '%s' for host %s, idx %d.\n", cmd, host, idx_in_host);
 		flush();
 		return false;
 	}
