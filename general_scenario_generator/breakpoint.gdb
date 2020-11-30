@@ -1,8 +1,10 @@
-b pg_global_deadlock_check_from_remote
-b GlobalDeadlockCheck_int
-b GlobalDeadlockCheck
-b globalDeadlockCheckFromRemote
-b DeadLockCheck
-b DeadLockCheck_int
-b FindLockCycle
+#b pg_global_deadlock_check_from_remote
+#b GlobalDeadlockCheck_int
+#b GlobalDeadlockCheck
+#b globalDeadlockCheckFromRemote
+#b DeadLockCheck
+#b DeadLockCheck_int
+#b FindLockCycle
+b BuildLocalWfG
+b GetExternalLockProperties
 b pg_gdd_check_remote

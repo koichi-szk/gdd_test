@@ -57,6 +57,7 @@ static struct option long_options[] =
 	{"verbose",	no_argument,		0,	'v'	},
 	{"debug",	no_argument,		0,	'D'	},
 	{"log",		required_argument,	0,	'l'	},
+	{"help",	no_argument,		0,	'H'	},
 	{0,			0,					0,	0	}
 };
 
@@ -70,7 +71,25 @@ static bool PQexecErrCheck(PGresult *res, char *cmd, char *host, int idx_in_host
 static void enterKey(char *prompt);
 static void print(bool logWrite, char *format, ...) __attribute__((format(printf, 2, 3)));
 static void flush(void);
+static void print_help(void);
 #define BOOL(b) ((b) ? "true" : "false")
+
+static void
+print_help(void)
+{
+	printf(
+	"--host host | -h host: add host.  Repeat this for more than one host.\n"
+	"--conn n | -c n: number of connection per host\n"
+	"--txn n | -t n:  number of transactions per connection.  Zero means disconnect from the host and repeat transations.\n"
+	"--dbname name | -d name: target database name.  Default is koichi.\n"
+	"--user name | -u name: database user name.  Default is koichi.\n"
+	"--interval n | -i n: maximum interval between query and transaction end, and before new transaction.\n"
+	"--query q | -q q: Query to issue.\n"
+	"--verbose | -v : verbose.   Print when each query is issued.\n"
+	"--debug | -d: debug mode.\n"
+	"--log name | -l name: specify log file to write a log.   Default is stdout.\n"
+	"--help : -H : print this message and exit.\n");
+}
 
 int
 main(int argc, char *argv[])
@@ -81,7 +100,7 @@ main(int argc, char *argv[])
 
 	while(1)
 	{
-		c = getopt_long(argc, argv, "q:l:i:h:c:t:d:u:Dv",
+		c = getopt_long(argc, argv, "q:l:i:h:c:t:d:u:DHv",
 						long_options, &option_index);
 		if (c == -1)
 			break;
@@ -133,6 +152,9 @@ main(int argc, char *argv[])
 			case 'v':
 				verbose = true;
 				break;
+			case 'H':
+				print_help();
+				exit(0);
 			case '?':
 				break;
 			default:
