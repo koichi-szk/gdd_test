@@ -80,7 +80,7 @@ print_help(void)
 	printf(
 	"--host host | -h host: add host.  Repeat this for more than one host.\n"
 	"--conn n | -c n: number of connection per host\n"
-	"--txn n | -t n:  number of transactions per connection.  Zero means disconnect from the host and repeat transations.\n"
+	"--txn n | -t n:  number of transactions per connection.  Zero means keep connected to the host and repeat transations.\n"
 	"--dbname name | -d name: target database name.  Default is koichi.\n"
 	"--user name | -u name: database user name.  Default is koichi.\n"
 	"--interval n | -i n: maximum interval between query and transaction end, and before new transaction.\n"
