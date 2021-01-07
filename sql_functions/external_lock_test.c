@@ -220,7 +220,7 @@ parse_locktag_tuple(HeapTupleHeader rec, LOCKTAG *locktag)
 }
 
 /*
- * parse_locktag() の配列バージョン
+ * Same as parse_locktag() but accepts locktag element as an array.
  */
 static bool
 parse_locktag_array(ArrayType *array, LOCKTAG *locktag)

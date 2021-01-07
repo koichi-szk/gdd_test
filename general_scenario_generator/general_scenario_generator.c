@@ -1,3 +1,67 @@
+/*
+ *********************************************************************************************************
+ *
+ * 	Generates chain of transactions to test various scenario of global deadlock detection.
+ *
+ *********************************************************************************************************
+ *
+ * Global deadlock scenario is described by series of dedicated command.
+ *
+ * Syntax rule is as follows:
+ *
+ * 1) Each command should stay in single text line.
+ * 2) '#' is regarded as the beginning of a comment.  Rest of the line is a comment.
+ * 3) Enclose character string with ' (single quote).  For single quote as a part of string, use '' (two single quotes).
+ *
+ * ------------------------------------------------------
+ *
+ * Following is each command description:
+ *
+ * 1. connect str1 str2
+ *    Begin a new downstream transaction.  Str1 is a label of the transaction.  If this is a child of an upstream
+ *    transaction, this is used as the "label" of the external lock.   Str2 is a connection string to the database.
+ *    Take a look at libpq documentation for details.
+ *
+ * 2. finish (or return)
+ *    Terminate most recent transaction initiated by "connect" command.  Connection to the remote transaction is terminated.
+ * 3. hold
+ *	  Return to the upstream transaction.   Similar to "finish" command but the connection to the downstream transaction is
+ *	  open.
+ * 4. echo str
+ *	  Echo character string str to the terminal.
+ * 5. Str
+ *	  Arbitrary character string (enclosed with single quote) is regarded as SQL statement.   It is executed immediately
+ *	  using current active connection as specified by "connect" command.
+ *
+ * ----<< Script example >>------------------------------
+ 
+# Example of general_scenario_generator script
+#
+#
+connect 'ubuntu00_001' 'host=ubuntu00 dbname=koichi user=koichi'
+	'LOCK TABLE t1 IN ACCESS SHARE MODE;'
+	connect 'ubuntu01_001' 'host=ubuntu01 dbname=koichi user=koichi'
+		'LOCK TABLE t1 IN ACCESS SHARE MODE;'
+		connect	'ubuntu02_001' 'host=ubuntu02 dbname=koichi user=koichi'
+			'LOCK TABLE t1 IN ACCESS SHARE MODE;'
+			connect 'ubuntu01_002' 'host=ubuntu01 dbname=koichi user=koichi'
+				'LOCK TABLE t2 IN ACCESS SHARE MODE;'
+				connect 'ubuntu02_002' 'host=ubuntu02 dbname=koichi user=koichi'
+					'LOCK TABLE t2 IN ACCESS SHARE MODE;'
+					echo '======= Be prepared to run gdb on ubuntu00 ====='
+					connect 'ubuntu00_002' 'host=ubuntu00 dbname=koichi user=koichi'
+						echo '******* Run debugger on this TXN ******'
+						'LOCK TABLE t1 IN ACCESS EXCLUSIVE MODE;'
+					finish
+				finish
+			finish
+		finish
+	finish
+finish
+
+ * 
+ *
+ */
 #include	<ctype.h>
 #include	<stdio.h>
 #include	<stdlib.h>
@@ -24,7 +88,7 @@ typedef int	bool;
  *
  * connect 'dsn' {'sql'| connect 'dsn' ... return} .. return
  */
-
+ 
 typedef enum StepCategory
 {
 	STEP_QUERY,
@@ -104,7 +168,7 @@ static bool runQuery(PGconn *conn, char *query);
 static void setCommand(RemoteSequence *sequence, char *cmdname, int nargs, char **args);
 static char *skip_sp(char *indata);
 static void unWaitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent);
-static void waitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent);
+ static void waitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent);
 static bool PQexecErrCheck(PGresult *res, char *cmd, char *dsn, bool return_f);
 static void enterKey(char *prompt);
 static void push_seq_stack(char *label);
@@ -119,6 +183,9 @@ static char *createRemoteSeqHdr(void);
  * -d, --diagnose: write parsed sequence.
  * -t, --test: Read and parse the sequence.   Do not run it.
  * -s, --stay: Do not terminate the sequence and keep this as outstanding transaction.
+ * -i, --interactive: Ask return key from the terminal when needed.  This can be used to wait for
+ *					  starting debugger or other test programs targetted to specific database.
+ * -b, --batch: disable "-i" option
  */
 int
 main(int argc, char *argv[])
@@ -184,7 +251,7 @@ main(int argc, char *argv[])
 				break;
 			case '?':
 				break;
-			default:
+ 			default:
 				fprintf(stderr, "?? invalid character code from getopt %o ??\n", c);
 		}
 	}
@@ -264,7 +331,7 @@ errHandler(bool return_f, char *format, ...)
 {
 	va_list	 ap;
 	char	 msg[MSGLEN+1];
-
+ 
 	va_start(ap, format);
 	vsnprintf(msg, MSGLEN, format, ap);
 	va_end(ap);
@@ -434,7 +501,7 @@ waitRemoteSequence(RemoteSequence *remote, RemoteSequence *parent)
 	res = PQexec(parent->conn, cmd);
 	PQexecErrCheck(res, cmd, parent->dsn, false);
 	PQclear(res);
-
+ 
 	parent->has_external_lock = true;
 
 	enterKey("Now waiting ... type Enter key: ");
@@ -521,6 +588,7 @@ runRemoteSequence(RemoteSequence *sequence, RemoteSequence *parent)
 		PGresult		*res;
 
 		/* Abort current transaction, disconnect and return */
+		fprintf(outF, "%sAborting remote sequence '%s'\n", HDR, sequence->label);
 		if (sequence->conn)
 		{
 			res = PQexec(sequence->conn, "ABORT;");
@@ -843,7 +911,7 @@ getString(char *indata, char **str)
 	{
 		if (*indata == '\'')
 		{
-			if (*(indata + 1) == '\'')
+ 			if (*(indata + 1) == '\'')
 			{
 				str_buf[ii] = '\'';
 				indata++;
@@ -993,7 +1061,7 @@ printRemoteSequence(RemoteSequence *sequence, int level)
 			sequence->has_external_lock ? "yes" : "no");
 	for (ii = 0; ii < sequence->nSequenceElement; ii++)
 	{
-		SequenceStep	*seq_step = sequence->sequenceStep[ii];
+ 		SequenceStep	*seq_step = sequence->sequenceStep[ii];
 		switch(sequence->sequenceCategory[ii])
 		{
 			case STEP_QUERY:

@@ -72,63 +72,6 @@ static bool gdd_test_external_lock_set_properties_int(char *label, PGPROC *proc,
 										  int target_pgprocno, int target_pid, int target_xid, bool update_flag);
 static Datum gdd_describe_int(PGPROC *proc);
 
-#if 0
-/*
- * CREATE FUNCTION gdd_external_lock_test_begin(outfname text)
- *		VOLATILE
- *		RETURNS int
- *		LANGUAGE c
- *		AS 'gdd_test.so', 'gdd_test_init_test';
- */
-PG_FUNCTION_INFO_V1(gdd_test_init_test);
-
-Datum
-gdd_test_init_test(PG_FUNCTION_ARGS)
-{
-	if (outf != NULL)
-	{
-		fprintf(outf, "Opened log file exists  '%s'.  Closing.\n", outfilename ? outfilename : "Unknown");
-		free(outfilename);
-		elog(LOG, "Opened log file exists.  Closing.\n");
-		fclose(outf);
-	}
-	outfilename = strdup(PG_GETARG_CSTRING(0));
-	outf = fopen(outfilename, "w");
-	if (outf == NULL)
-		elog(INFO, "Could not open the output file.");
-	database_system_id = get_database_system_id();
-	fprintf(outf, "%s: beginning global deadlock detection test.\n", __func__);
-	PG_RETURN_INT32(0);
-}
-#endif
-
-
-
-#if 0
-/*
- * CREATE FUNCTION gdd_external_lock_test_finish()
- *		VOLATILE
- *		RETURNS int
- *		LANGUAGE c
- *		AS 'gdd_test.so', 'gdd_test_finish_test';
- */
-PG_FUNCTION_INFO_V1(gdd_test_finish_test);
-
-Datum
-gdd_test_finish_test(PG_FUNCTION_ARGS)
-{
-	if (outf == NULL)
-	{
-		elog(LOG, "No log file opened.");
-		PG_RETURN_INT32(-1);
-	}
-	fprintf(outf, "%s: finishing global deadlock detection test.\n", __func__);
-	fclose(outf);
-	outf = NULL;
-	PG_RETURN_INT32(0);
-}
-#endif
-
 
 /*
  * CREATE FUNCTION gdd_show_myself()
@@ -214,8 +157,6 @@ gdd_test_show_myself_int(PGPROC *proc)
  *		LANGUAGE c
  *		AS 'gdd_test.so', 'gdd_test_set_locktag_external_pgprocno';
  * 
- * K.Suzuki: 引数は pgprocno? show self でできればいいか？定義を変更すること
- *			 注意：このロックはロックタグを作成しただけで、まだロックは取得していないことに注意。
  */
 PG_FUNCTION_INFO_V1(gdd_test_set_locktag_external_myself);
 
@@ -261,8 +202,6 @@ gdd_test_set_locktag_external_pgprocno(PG_FUNCTION_ARGS)
  *		LANGUAGE c
  *		AS 'gdd_test.so', 'gdd_test_set_locktag_external_pid';
  * 
- * K.Suzuki: 引数は pgprocno? show self でできればいいか？定義を変更すること
- *			 注意：このロックはロックタグを作成しただけで、まだロックは取得していないことに注意。
  */
 PG_FUNCTION_INFO_V1(gdd_test_set_locktag_external_pid);
 
