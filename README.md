@@ -2,13 +2,13 @@
 
 ## Overview
 
-This repo contains test tools for global deadlock detection of of PG12 and later.
+This repo contains test tools for global deadlock detection of of PG13 and later.
 
 Author: Koichi Suzuki
 
-Organization: 2ndQuadrant Ltd.,
+Organization: EnteririseDB
 
-Copyright (c) 2020 2ndQuadrant Ltd.,
+Copyright (c) 2021 EnterpriseDB
 
 ## Important directory
 
@@ -17,11 +17,12 @@ Copyright (c) 2020 2ndQuadrant Ltd.,
 Collection of C-based sql functions to drive and setup information.
 
 This directory is dependent on original PostgreSQL source directory, at present, it is set to
-`/hdd2/koichi/postgres-folk/postgres`, which is folied repository of community postgreSQL.
+`/hdd2/koichi/postgres-folk/postgres`, which is folked repository of community postgreSQL.
 
 ## Database itself
 
-Test database (`pg12_gdd_database`) is not included in GIT repo.   See `.gitignore` for details.
+Test database (`pg13_gdd_database`) is not included in GIT repo.   See `.gitignore` for details.
+You can build test database using shell scripts in this directory.
 
 ## Outline of Global Deadlock Detection
 
@@ -29,10 +30,22 @@ As mentioned in most of Transaction Management textbooks, Global Deadlock is a s
 clinches among more than one newwork nodes.   It is not specific to database and can occur in any distributed
 applications.
 
-### Local deadlock scenario
+For more information about implementation architecture, see [here](https://docs.google.com/presentation/d/1pf_BLeJ3h38EN-oHpy8ymgelRh7iPoq6R2WgttDN6DY/edit?usp=sharing)
 
-### Local deadlock detection
+## Shell scripts for the test environment
 
-### Global deadlock scenario
+This directory contains the following shell scripts useful to build the test environment and run them.
 
-### Global deadlock detection
+The author understands that these scripts are written as the test progresses and there are still many things which need improvement for portability and flexibility.
+
+### `build.sh`
+
+clean.sh
+conf.sh
+deploy.sh
+init.sh
+start.sh
+stop.sh
+
+### Global deadlock scenario generator
+

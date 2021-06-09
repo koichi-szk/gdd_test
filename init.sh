@@ -28,7 +28,6 @@ psql -f $TESTSRC/gdd_test.sql |& tee -a $LOGFILE
 TMP=/tmp/$$
 TMP_BASE=$(basename $TMP)
 
-HOSTS=(ubuntu00 ubuntu01 ubuntu02 ubuntu03 ubuntu04)
 for h in "${HOSTS[@]}"; do
 	echo "=============<< $h >>===================="
 	ssh $h << EOF > /dev/null 2>&1
