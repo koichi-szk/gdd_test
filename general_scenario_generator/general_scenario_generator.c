@@ -7,6 +7,10 @@
  *
  * Global deadlock scenario is described by series of dedicated command.
  *
+ * WHY PSQL DOES NOT WORK:  PSQL \c command allows to change connection to another database.   However, with \c command,
+ * old connection is closed.   We cannot implement chain of remote transactions which is needed to make global deadlock
+ * to happen.
+ *
  * Syntax rule is as follows:
  *
  * 1) Each command should stay in single text line.
