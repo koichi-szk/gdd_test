@@ -13,7 +13,7 @@ PGFILEDESC = "pg_ctl - starts/stops/restarts the PostgreSQL server"
 PGAPPICON=win32
 
 subdir = src/bin/pg_ctl
-top_builddir = /hdd2/koichi/postgres-folk/postgres
+top_builddir = /hdd2/koichi/postgres-global-deadlock/postgres
 include $(top_builddir)/src/Makefile.global
 
 # On Windows, we need to link with libpq, just for use of pqexpbuffer;

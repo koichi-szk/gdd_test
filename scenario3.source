@@ -1,0 +1,8 @@
+b DeadLockCheck
+b GlobalDeadlockCheck
+b GlobalDeadlockCheckRemote
+b pg_global_deadlock_check_from_remote
+b pg_global_deadlock_recheck_from_remote
+b pg_global_deadlock_check_describe_backend
+b deadlock.c:2600
+b deadlock.c:2849

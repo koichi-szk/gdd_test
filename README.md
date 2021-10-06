@@ -2,7 +2,7 @@
 
 ## Overview
 
-This repo contains test tools for global deadlock detection of of PG13 and later.
+This repo contains test tools for global deadlock detection of of PG14 and later.
 
 Author: Koichi Suzuki
 
@@ -21,7 +21,7 @@ This directory is dependent on original PostgreSQL source directory, at present,
 
 ## Database itself
 
-Test database (`pg13_gdd_database`) is not included in GIT repo.   See `.gitignore` for details.
+Test database (`pg14_gdd_database`) is not included in GIT repo.   See `.gitignore` for details.
 You can build test database using shell scripts in this directory.
 
 ## Outline of Global Deadlock Detection
@@ -35,10 +35,18 @@ For more information about implementation architecture, see [here](https://docs.
 ## Shell scripts for the test environment
 
 This directory contains the following shell scripts useful to build the test environment and run them.
-
 The author understands that these scripts are written as the test progresses and there are still many things which need improvement for portability and flexibility.
 
 ### `build.sh`
+
+Build necessary modules:
+
+* PostgreSQL with global deadlock detection code.  This is currently based upon REL\_14\_0.
+* Additional SQL functions to use GDD from libpq.
+* Additional SQL test functions
+* Global deadlock scenarion generator
+
+See `build.sh` source for options.
 
 clean.sh
 conf.sh

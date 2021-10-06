@@ -2,7 +2,7 @@
 . ./conf.sh
 
 PG_INSTALLHOME=/home/koichi
-PG_INSTALLDIR=pg13_gdd
+PG_INSTALLDIR=pg14_gdd
 GDD_TESTHOME=/home/koichi
 GDD_TESTDIR=gdd_test
 
