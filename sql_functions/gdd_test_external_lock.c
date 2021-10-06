@@ -1294,11 +1294,11 @@ waitStatusName(int status)
 {
 	switch (status)
 	{
-		case STATUS_WAITING:
+		case PROC_WAIT_STATUS_WAITING:
 			return "STATUS_WAITING";
-		case STATUS_OK:
+		case PROC_WAIT_STATUS_OK:
 			return "STATUS_OK";
-		case STATUS_ERROR:
+		case PROC_WAIT_STATUS_ERROR:
 			return "STATUS_ERROR";
 	}
 	return "STATUS_NO_SUCH_VALUE";

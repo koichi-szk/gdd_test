@@ -9,7 +9,7 @@
 
 MODULE_big = gdd_test
 
-TOP_DIR = /hdd2/koichi/postgres-folk/postgres
+TOP_DIR = /hdd2/koichi/postgres-global-deadlock/postgres
 
 # OBJS = external_lock_test.o gdd_test_external_lock.o
 OBJS = gdd_test_external_lock.o external_lock_test.o

@@ -3,7 +3,7 @@ TEST_HOME=$HOME/gdd_test
 DBDIR=pg14_gdd_database
 DBPATH=$TEST_HOME/$DBDIR
 pgmode pg14_gdd
-SRCDIR=/hdd2/koichi/postgres-folk/postgres
+SRCDIR=/hdd2/koichi/postgres-global-deadlock/postgres
 TARGET=$HOME/pg14_gdd
 TESTSRC=./sql_functions
 BUILD_LOGDIR=/var/log/koichi/gdd_test_build
