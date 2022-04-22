@@ -1,4 +1,7 @@
 #!/bin/bash
+#
+# Copyright (c) 2022, Koichi Suzuki
+#
 . ./conf.sh
 
 PG_INSTALLHOME=/home/koichi

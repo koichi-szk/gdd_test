@@ -1,5 +1,7 @@
 # Example of general_scenario_generator script
 #
+# Copyright (c) 2021-2022, Koichi Suzuki
+#
 # This needs more test.  As of Nov.10, current code does not
 # detect deadlock for this scenario.
 #

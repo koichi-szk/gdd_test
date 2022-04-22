@@ -3,6 +3,9 @@
  *
  * 	Generates chain of transactions to test various scenario of global deadlock detection.
  *
+ *  Copyright (c) 2022, Koichi Suzuki
+ *
+ *
  *********************************************************************************************************
  *
  * Global deadlock scenario is described by series of dedicated command.

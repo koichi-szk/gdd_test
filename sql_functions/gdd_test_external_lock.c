@@ -7,6 +7,7 @@
  * See src/backend/storage/lmgr/README for a description of the deadlock
  * detection and resolution algorithms.
  *
+ * Portions Copyright (c) 2021-2022, Koichi Suzuki
  * Portions Copyright (c) 2020, 2ndQuadrant Ltd.,
  * Portions Copyright (c) 1996-2020, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California

@@ -1,6 +1,7 @@
 /*
  * 基本シナリオの試験
  */
+-- Copyright (c) 2022, Koichi Suzuki
 \x
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1 (a int, b int);

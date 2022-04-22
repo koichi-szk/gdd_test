@@ -1,5 +1,7 @@
 # Example of general_scenario_generator script
 #
+# Copyright (c) 2022, Koichi Suzuki
+#
 connect	'ubuntu00_001' 'host=ubuntu00 dbname=koichi user=koichi'
 	'LOCK TABLE t1 IN ACCESS EXCLUSIVE MODE;'
 	connect 'ubuntu01_001' 'host=ubuntu01 dbname=koichi user=koichi'

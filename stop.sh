@@ -1,4 +1,7 @@
 #!/bin/bash
+#
+# Copyright (c) 2022, Koichi Suzuki
+#
 cd $HOME/gdd_test
 . ./conf.sh
 cd $TEST_HOME

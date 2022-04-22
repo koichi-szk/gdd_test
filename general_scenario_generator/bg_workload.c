@@ -3,6 +3,8 @@
  *
  * Generator of background workload for the test of global deadlock scenario test.
  *
+ * Copyright (c) 2022, Koichi Suzuki
+ *
  ************************************************************************************************************
  */
 #include	<errno.h>

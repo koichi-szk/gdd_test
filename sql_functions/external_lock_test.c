@@ -2,6 +2,7 @@
  *
  * external lock test functions
  *
+ * Copyright (c) 2022, Koichi Suzuki
  *
  *-------------------------------------------------------------------------
  */

@@ -1,4 +1,7 @@
 #!/bin/bash
+#
+# Copyright (c) 2022, Koichi Suzuki
+#
 TEST_HOME=$HOME/gdd_test
 DBDIR=pg14_gdd_database
 DBPATH=$TEST_HOME/$DBDIR

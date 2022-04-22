@@ -1,4 +1,7 @@
 #!/bin/bash
+#
+# Copyright (c) 2022, Koichi Suzuki
+#
 
 CLR_OPT=n
 OPT_FLAG=n

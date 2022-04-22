@@ -2,6 +2,7 @@
 #
 # Makefile for src/bin/pg_ctl
 #
+# Portions Copyright (c) 2022, Koichi Suzuki
 # Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #

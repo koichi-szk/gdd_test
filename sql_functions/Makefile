@@ -3,6 +3,8 @@
 # Makefile--
 #    Makefile for contrib/gdd_test
 #
+# Copyright (c) 2022, Koichi Suzuki
+#
 #-------------------------------------------------------------------------
 
 # contrib/gdd_test/Makefile
